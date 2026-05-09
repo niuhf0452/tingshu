@@ -113,8 +113,8 @@ class Qwen3TTSClient:
             if not model_path.exists():
                 raise FileNotFoundError(
                     f"Qwen3-TTS model not found at {model_path}. "
-                    "Download per server/README.md before setting "
-                    "tts.provider=qwen3_tts."
+                    "Download per the project README (Qwen3-TTS setup section) "
+                    "before setting tts.provider=qwen3_tts."
                 )
             try:
                 from mlx_audio.tts.utils import load_model
