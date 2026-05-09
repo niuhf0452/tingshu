@@ -1,0 +1,49 @@
+[project]
+name = "tingshu-server"
+version = "0.1.0"
+description = "TingShu server: book ingest, LLM preprocessing, TTS synthesis."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "python-multipart>=0.0.9",
+    "pyyaml>=6.0",
+    "chardet>=5.2",
+    "jieba>=0.42",
+    "wakepy>=0.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+    "ruff>=0.6",
+    "numpy>=1.24",
+]
+mlx = [
+    # TTS only — LLM goes through DeepSeek HTTP, not local MLX.
+    "mlx-audio>=0.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: integration tests that load real models (skipped by default; run with `-m slow`)",
+]
+# Default: skip slow tests. Override with `-m slow` or `-m ''`.
+addopts = "-m 'not slow'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

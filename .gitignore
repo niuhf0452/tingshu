@@ -1,0 +1,37 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv-annotate/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+
+# Xcode / SwiftPM per-user state
+# `xcuserdata/` covers both `*.xcodeproj/xcuserdata/` and
+# `.swiftpm/.../xcuserdata/`; `*.xcuserstate` is the binary UI snapshot
+# that Xcode rewrites every time you re-open a project.
+xcuserdata/
+*.xcuserstate
+# Swift Package Manager build artifacts (used inside ios/ when running
+# `swift build`; the `ios/.build/` tree is gigabytes of checkouts).
+.build/
+
+# Tool-specific local state
+.claude/
+.gstack/
+
+# runtime data — file-system book repo
+server/data/books/
+!server/data/books/.gitkeep
+server/data/tts_cache/
+
+# Model weights + zero-shot prompt audio (large, host-specific)
+pretrained_models/
+server/data/voices/prompts/*.wav
+server/data/voices/prompts/*.txt
+
+# local config override
+config.yaml

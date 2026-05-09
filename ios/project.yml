@@ -1,0 +1,33 @@
+name: TingShu
+options:
+  bundleIdPrefix: com.tingshu
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "16.0"
+
+packages:
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    from: "0.9.0"
+
+targets:
+  TingShu:
+    type: application
+    platform: iOS
+    sources:
+      - path: TingShu/Sources
+        excludes:
+          - App/Info.plist
+    resources:
+      - path: TingShu/Sources/App/Assets.xcassets
+    settings:
+      base:
+        INFOPLIST_FILE: TingShu/Sources/App/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.tingshu.app
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: false
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - package: ZIPFoundation

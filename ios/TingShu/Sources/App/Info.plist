@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+	<!-- iOS 14+: asking for local-network access is mandatory when the
+	     app talks to LAN hosts. Without this string the permission
+	     prompt has no body and the connection silently fails. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>连接你的听书服务端（Mac Mini）以下载书籍和获取 TTS 音频</string>
+	<!-- Allow HTTP to LAN addresses (the server runs unencrypted on the
+	     trusted home network). NSAllowsLocalNetworking permits
+	     .local./link-local/private IP ranges (10/8, 172.16/12,
+	     192.168/16) without a full ATS exception. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

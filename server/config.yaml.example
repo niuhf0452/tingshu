@@ -1,0 +1,48 @@
+# TingShu server configuration
+# Copy to config.yaml and edit for local overrides.
+
+storage:
+  # Root directory for book data (relative to server/ or absolute).
+  data_dir: data
+
+preprocess:
+  # Background lookahead: pre-generate metadata for N chapters ahead.
+  lookahead_chapters: 1
+
+llm:
+  # Only `deepseek` is supported.
+  provider: deepseek
+  # DeepSeek V4 flash (no thinking). The API key comes from the
+  # DEEPSEEK_API_KEY env var; the `deepseek_api_key` field below is a
+  # fallback for offline / static-config setups (NEVER commit a real key).
+  deepseek_model: deepseek-v4-flash
+  deepseek_base_url: https://api.deepseek.com/v1
+  deepseek_api_key: ""
+
+tts:
+  # One of: stub, qwen3_tts
+  provider: stub
+  cache_dir: data/tts_cache
+  voice_library: data/voices/speakers.json
+  qwen3:
+    # Only used when provider=qwen3_tts. See server/README.md for setup.
+    model_dir: pretrained_models/Qwen3-TTS-0.6B
+    prompts_dir: data/voices/prompts
+
+auth:
+  # Bearer-token auth for the public API. The iOS app sends
+  # `Authorization: Bearer <base64(username:password)>`; the server
+  # constant-time compares both halves.
+  #
+  # Disabled by default so dev / first-run setups work without
+  # credentials. Enable before exposing the server beyond your trusted
+  # LAN. `/health` stays public regardless (liveness probes don't need
+  # creds).
+  #
+  # NEVER commit real credentials. Either keep these placeholders in
+  # config.yaml.example and only fill the live config.yaml (which is
+  # gitignored), or override via env: TINGSHU_AUTH_ENABLED=true,
+  # TINGSHU_AUTH_USERNAME=..., TINGSHU_AUTH_PASSWORD=...
+  enabled: false
+  username: ""
+  password: ""

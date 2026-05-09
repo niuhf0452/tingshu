@@ -1,0 +1,705 @@
+[
+  {
+    "speaker_id": "zs:vd_ancient_female_youth",
+    "gender": "female",
+    "age": "youth",
+    "personality": [
+      "gentle",
+      "mature"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "古风女声 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_ancient_male_adult",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "serious",
+      "cold"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "古风男声 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_arrogant_male_adult",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "arrogant",
+      "cold"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "傲娇霸总 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_boyish_male_teen",
+    "gender": "male",
+    "age": "teen",
+    "personality": [
+      "naive",
+      "kind"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "邻家男孩 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_brave_female_adult",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "brave",
+      "determined"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "女将军 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_calm_male_adult",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "calm"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "沉稳中年男 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_charming_female_adult",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "passionate",
+      "mature"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "魅惑女声 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_cheerful_female_adult",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "cheerful",
+      "kind"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "开朗姐姐 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_cheerful_male_youth",
+    "gender": "male",
+    "age": "youth",
+    "personality": [
+      "cheerful",
+      "passionate"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "阳光青年男 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_child_cheerful",
+    "gender": "neutral",
+    "age": "child",
+    "personality": [
+      "cheerful",
+      "kind"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "阳光小孩 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_child_clever",
+    "gender": "neutral",
+    "age": "child",
+    "personality": [
+      "cunning",
+      "playful"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "鬼灵精怪 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_child_gentle",
+    "gender": "neutral",
+    "age": "child",
+    "personality": [
+      "gentle",
+      "naive"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "安静小孩 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_child_lively",
+    "gender": "neutral",
+    "age": "child",
+    "personality": [
+      "playful",
+      "brave"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "活泼小孩 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_child_melancholy",
+    "gender": "neutral",
+    "age": "child",
+    "personality": [
+      "melancholy",
+      "gentle"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "孤独小孩 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_child_timid",
+    "gender": "neutral",
+    "age": "child",
+    "personality": [
+      "timid",
+      "naive"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "胆小小孩 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_cold_female_adult",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "cold",
+      "arrogant"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "高冷御姐 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_cold_female_youth",
+    "gender": "female",
+    "age": "youth",
+    "personality": [
+      "cold",
+      "arrogant"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "高冷少女 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_cold_male_adult",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "cold",
+      "mature"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "高冷男声 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_cunning_female_adult",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "cunning",
+      "mature"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "心机姐姐 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_cunning_male_elder",
+    "gender": "male",
+    "age": "elder",
+    "personality": [
+      "cunning",
+      "mature"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "老谋深算 | generated 2026-04-28T14:11:04.332200+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_cute_female_teen",
+    "gender": "female",
+    "age": "teen",
+    "personality": [
+      "naive",
+      "playful"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "萌妹 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_dub_male_adult",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "serious",
+      "mature"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "译制片男配 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_elegant_male_youth",
+    "gender": "male",
+    "age": "youth",
+    "personality": [
+      "calm",
+      "mature"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "儒雅青年男 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_energetic_female_youth",
+    "gender": "female",
+    "age": "youth",
+    "personality": [
+      "cheerful",
+      "passionate"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "爽快女青年 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_energetic_male_youth",
+    "gender": "male",
+    "age": "youth",
+    "personality": [
+      "cheerful",
+      "brave"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "活力小哥 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_fierce_female_elder",
+    "gender": "female",
+    "age": "elder",
+    "personality": [
+      "fierce",
+      "arrogant"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "强势女声 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_fierce_male_elder",
+    "gender": "male",
+    "age": "elder",
+    "personality": [
+      "fierce",
+      "cold"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "严厉老前辈 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_fresh_female_youth",
+    "gender": "female",
+    "age": "youth",
+    "personality": [
+      "cheerful",
+      "naive"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "清新女青年 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_fresh_male_youth",
+    "gender": "male",
+    "age": "youth",
+    "personality": [
+      "cheerful",
+      "naive"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "清爽男大学生 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_gentle_female_youth",
+    "gender": "female",
+    "age": "youth",
+    "personality": [
+      "gentle",
+      "calm"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "温柔女青年 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_gentle_male_youth",
+    "gender": "male",
+    "age": "youth",
+    "personality": [
+      "gentle",
+      "kind"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "温柔青年男 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_girl_female_teen",
+    "gender": "female",
+    "age": "teen",
+    "personality": [
+      "gentle",
+      "kind"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "邻家女孩 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_graceful_female_adult",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "gentle",
+      "mature"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "温柔淑女 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_kidstory_female",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "gentle",
+      "cheerful"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "少儿故事女 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_kind_female_adult",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "kind",
+      "gentle"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "温柔妈妈 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_kind_female_elder",
+    "gender": "female",
+    "age": "elder",
+    "personality": [
+      "kind",
+      "gentle"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "慈祥老奶奶 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_kind_male_adult",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "kind",
+      "gentle"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "温暖父亲男 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_kind_male_elder",
+    "gender": "male",
+    "age": "elder",
+    "personality": [
+      "kind",
+      "gentle"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "慈祥老爷爷 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_lazy_male_youth",
+    "gender": "male",
+    "age": "youth",
+    "personality": [
+      "playful",
+      "cunning"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "懒散青年男 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_magnetic_male_adult",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "mature",
+      "gentle"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "磁性中年男 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_mature_female_adult",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "mature",
+      "calm"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "成熟女声 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_melancholy_female_elder",
+    "gender": "female",
+    "age": "elder",
+    "personality": [
+      "melancholy",
+      "gentle"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "沧桑老妇人 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_melancholy_female_youth",
+    "gender": "female",
+    "age": "youth",
+    "personality": [
+      "melancholy",
+      "gentle"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "忧郁女青年 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_melancholy_male_youth",
+    "gender": "male",
+    "age": "youth",
+    "personality": [
+      "melancholy",
+      "calm"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "忧郁青年男 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_narrator_female_adult",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "gentle",
+      "calm"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "流畅女旁白 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_narrator_male_mature",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "calm",
+      "mature"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "中年男旁白 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_noble_male_adult",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "calm",
+      "serious"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "贵族男声 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_passionate_male_adult",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "passionate",
+      "brave"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "热血中年男 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_philosopher_male_adult",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "wise",
+      "calm"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "哲思男声 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_playful_female_youth",
+    "gender": "female",
+    "age": "youth",
+    "personality": [
+      "playful",
+      "cheerful"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "俏皮女声 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_podcast_male_adult",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "calm",
+      "gentle"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "深夜播客男 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_storybook_female",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "gentle",
+      "playful"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "绘本女声 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_suspense_male_adult",
+    "gender": "male",
+    "age": "adult",
+    "personality": [
+      "serious",
+      "melancholy"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "悬疑解说男 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_sweet_female_teen",
+    "gender": "female",
+    "age": "teen",
+    "personality": [
+      "gentle",
+      "naive"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "甜美少女 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_sweet_female_youth",
+    "gender": "female",
+    "age": "youth",
+    "personality": [
+      "gentle",
+      "cheerful"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "甜美女青年 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_tender_female_adult",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "gentle",
+      "passionate"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "柔美女友 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_timid_female_youth",
+    "gender": "female",
+    "age": "youth",
+    "personality": [
+      "timid",
+      "naive"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "怯懦少女 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_timid_male_youth",
+    "gender": "male",
+    "age": "youth",
+    "personality": [
+      "timid",
+      "gentle"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "怯懦少年男 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_warm_male_youth",
+    "gender": "male",
+    "age": "youth",
+    "personality": [
+      "gentle",
+      "mature"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "温暖男声 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_wise_female_adult",
+    "gender": "female",
+    "age": "adult",
+    "personality": [
+      "wise",
+      "gentle"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "知性女声 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_wise_female_elder",
+    "gender": "female",
+    "age": "elder",
+    "personality": [
+      "wise",
+      "calm"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "智慧老奶奶 | generated 2026-04-28T14:21:52.192251+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_wise_female_youth",
+    "gender": "female",
+    "age": "youth",
+    "personality": [
+      "wise",
+      "gentle"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "智慧女青年 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_wise_male_elder",
+    "gender": "male",
+    "age": "elder",
+    "personality": [
+      "wise",
+      "calm"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "智慧长者男 | generated 2026-04-28T14:00:56.623791+00:00"
+  },
+  {
+    "speaker_id": "zs:vd_youth_male_teen",
+    "gender": "male",
+    "age": "teen",
+    "personality": [
+      "determined",
+      "brave"
+    ],
+    "source": "qwen3-tts-voicedesign",
+    "notes": "少年男声 | generated 2026-04-28T14:00:56.623791+00:00"
+  }
+]
