@@ -71,7 +71,14 @@ struct PlayerView: View {
             .presentationDetents([.medium])
         }
         .task { await playback.open(book: book) }
-        .onDisappear { playback.stop() }
+        .onAppear { setIdleTimerDisabled(playback.state.followMode) }
+        .onChange(of: playback.state.followMode) { _, newValue in
+            setIdleTimerDisabled(newValue)
+        }
+        .onDisappear {
+            playback.stop()
+            setIdleTimerDisabled(false)
+        }
         .alert(
             "出错了",
             isPresented: Binding(
@@ -81,6 +88,12 @@ struct PlayerView: View {
             actions: { Button("确定") { playback.state.error = nil } },
             message: { Text(playback.state.error ?? "") }
         )
+    }
+
+    private func setIdleTimerDisabled(_ disabled: Bool) {
+        #if os(iOS)
+        UIApplication.shared.isIdleTimerDisabled = disabled
+        #endif
     }
 
     private var browseChapterTitle: String {
@@ -403,11 +416,12 @@ struct PlayerView: View {
 
     /// Push (not sheet) so the system back button on the navigation bar
     /// returns to the player view rather than slamming the modal away.
-    /// Bookshelf still uses a sheet for its own settings entry — see
-    /// `BookshelfView`.
+    /// Routes to ``PlayerSettingsView`` (subset of app settings + the
+    /// per-book character roster), not the full app settings — those
+    /// still live behind the bookshelf gear button.
     private var settingsButton: some View {
         NavigationLink {
-            SettingsView(presentation: .push)
+            PlayerSettingsView(book: book)
         } label: {
             Image(systemName: "gearshape")
                 .font(.title3)

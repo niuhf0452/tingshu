@@ -297,3 +297,46 @@ def test_endpoint_empty_voice_library_503(tts_service, repo_with_book):
             "tone": "neutral",
         })
     assert r.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Cache wipe endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_endpoint_clear_cache_removes_all_files(api_client, tts_service):
+    """``DELETE /api/tts/cache`` wipes every ``.m4a`` plus stale tmp
+    files; the directory itself stays. After the wipe a follow-up
+    synth re-populates it (no permissions corrupted, etc.)."""
+    cache_root = tts_service.cache.root
+    # Seed the cache with a real synthesis + a stray ``.tmp`` left over
+    # from a hypothetical interrupted ``put``.
+    tts_service.synthesize(
+        text="你好", speaker=LIBRARY[2], tone=Tone.NEUTRAL,
+    )
+    (cache_root / "stale.m4a.tmp").write_bytes(b"partial")
+    files_before = list(cache_root.iterdir())
+    assert any(f.suffix == ".m4a" for f in files_before)
+    assert any(f.name.endswith(".tmp") for f in files_before)
+
+    r = api_client.delete("/api/tts/cache")
+    assert r.status_code == 204
+
+    files_after = list(cache_root.iterdir())
+    assert files_after == []
+    assert cache_root.exists()  # directory itself survives
+
+    # Subsequent synth still works — directory is reusable.
+    audio = tts_service.synthesize(
+        text="你好", speaker=LIBRARY[2], tone=Tone.NEUTRAL,
+    )
+    assert len(audio) > 0
+    assert any(f.suffix == ".m4a" for f in cache_root.iterdir())
+
+
+def test_endpoint_clear_cache_idempotent_on_empty(api_client, tts_service):
+    """Wiping an already-empty cache is a no-op, not an error."""
+    r = api_client.delete("/api/tts/cache")
+    assert r.status_code == 204
+    r = api_client.delete("/api/tts/cache")
+    assert r.status_code == 204

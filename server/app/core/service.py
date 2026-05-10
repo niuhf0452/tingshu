@@ -48,9 +48,11 @@ from .models import (
     BookListResponse,
     BookMeta,
     Character,
+    CharacterUpdate,
     ChapterEntry,
     ChapterMeta,
 )
+from .narrator import NARRATOR_ID_MAX
 from .nlp.chapters import detect_and_split_chapters
 from .nlp.reconcile import merge_character_updates, reconcile_chapter_speakers
 from .nlp.sentences import locate_sentences
@@ -329,6 +331,73 @@ class BookService:
 
     def get_meta(self, book_id: str) -> BookMeta:
         return self.repo.load_meta(book_id)
+
+    # --- character roster (book-level, user-editable) ----------------------
+
+    def list_book_characters(self, book_id: str) -> list[Character]:
+        """Return the cumulative roster, narrator slots filtered out.
+
+        Narrator-range ids (≤15) aren't real characters — they're system
+        slots whose voice is selected via the app's separate "旁白音色"
+        picker. The app's character-voice screen is for book characters
+        only, so we only expose ``id > NARRATOR_ID_MAX`` here.
+
+        Read does not take the book lock — readers seeing a partially-
+        merged roster mid-analysis is fine (the next refresh shows the
+        finished state) and skipping the lock means the list call never
+        waits behind a multi-second LLM analysis. Writers use the lock
+        and an atomic file swap, so a reader still sees a consistent
+        snapshot, just possibly a stale one.
+        """
+        roster = self.repo.load_characters(book_id)
+        return [c for c in roster if c.id > NARRATOR_ID_MAX]
+
+    def update_book_character(
+        self,
+        book_id: str,
+        character_id: int,
+        update: CharacterUpdate,
+    ) -> Character:
+        """Apply a partial update to one character in ``characters.json``.
+
+        Holds the per-book lock during read-modify-write so concurrent
+        chapter analysis can't lose either side's edit. Per spec the
+        write **waits** on contention but never fails: chapter analysis
+        also uses ``_book_lock(book_id)`` (see ``generate_chapter_meta``)
+        and only holds it briefly for the merge step, so the user's tap
+        delays at most one merge cycle. Different chapters' analyses
+        already serialise on this same lock.
+
+        Raises:
+            ValueError: ``character_id`` is in the narrator-reserved
+                range (≤ 15) — those aren't editable here.
+            KeyError: ``character_id`` not present in the roster.
+        """
+        if character_id <= NARRATOR_ID_MAX:
+            raise ValueError(
+                f"character_id {character_id} is reserved for narrator slots; "
+                "edit narrator voice via the app settings instead",
+            )
+        with self._book_lock(book_id):
+            roster = self.repo.load_characters(book_id)
+            for i, ch in enumerate(roster):
+                if ch.id != character_id:
+                    continue
+                # Build the new Character from the existing one + only
+                # the fields the client sent. ``model_copy(update=…)``
+                # silently ignores ``None`` only when the field already
+                # accepts None — it doesn't here, so filter explicitly.
+                changes = update.model_dump(exclude_unset=True)
+                if not changes:
+                    return ch  # no-op patch — return unchanged
+                roster[i] = ch.model_copy(update=changes)
+                self.repo.save_characters(book_id, roster)
+                log.info(
+                    "character updated: book=%s id=%d changes=%s",
+                    book_id, character_id, sorted(changes.keys()),
+                )
+                return roster[i]
+        raise KeyError(f"character {character_id} not in book {book_id}")
 
     # --- delete --------------------------------------------------------------
 

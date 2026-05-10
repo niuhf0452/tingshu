@@ -56,3 +56,28 @@ class TTSCache:
         tmp = path.with_suffix(".m4a.tmp")
         tmp.write_bytes(data)
         os.replace(tmp, path)
+
+    def clear(self) -> int:
+        """Wipe every cached ``.m4a`` plus any ``.m4a.tmp`` left over
+        from a partial write. Leaves the directory itself in place so
+        callers (and the lifespan hook in ``main.py``) don't need to
+        recreate it. Returns the count of files removed for logging.
+
+        In-flight writers using ``put`` re-create their files via the
+        ``os.replace`` call after we run, so a clear racing with a
+        concurrent synth produces a fresh entry rather than corruption.
+        """
+        if not self.root.exists():
+            return 0
+        removed = 0
+        for entry in self.root.iterdir():
+            if not entry.is_file():
+                continue
+            if entry.suffix not in (".m4a", ".tmp"):
+                continue
+            try:
+                entry.unlink()
+                removed += 1
+            except FileNotFoundError:
+                pass  # raced with a concurrent clear / put rename
+        return removed

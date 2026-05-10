@@ -179,6 +179,23 @@ class UploadResponse(BaseModel):
     chapter_count: int
 
 
+class CharacterUpdate(BaseModel):
+    """Partial update payload for ``PATCH
+    /api/books/{book_id}/characters/{character_id}``.
+
+    All fields optional — the server only overwrites keys the client
+    actually sent. Identity / name aren't editable here: the LLM uses
+    them to recognise the character across chapters, so a user rename
+    would break re-analysis. Voice selection is driven by the matcher
+    inputs (gender / age / personality), so those are the editable
+    fields.
+    """
+
+    gender: Gender | None = None
+    age: Age | None = None
+    personality: list[Personality] | None = None
+
+
 class TTSRequest(BaseModel):
     """Request a sentence's TTS audio.
 

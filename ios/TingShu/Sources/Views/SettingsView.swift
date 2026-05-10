@@ -21,6 +21,10 @@ struct SettingsView: View {
     @State private var cacheSizeBytes: Int? = nil
     @State private var showClearConfirm = false
     @State private var isClearing = false
+    /// One-shot error blurb if the server-side wipe fails. The local
+    /// part still happens regardless — surfacing the partial outcome
+    /// is more useful than rolling it back.
+    @State private var clearError: String?
 
     init(presentation: Presentation = .sheet) {
         self.presentation = presentation
@@ -160,15 +164,31 @@ struct SettingsView: View {
         }
         .task { refreshCacheSize() }
         .confirmationDialog(
-            "确定清除音频缓存？",
+            "清除音频缓存",
             isPresented: $showClearConfirm,
             titleVisibility: .visible,
         ) {
-            Button("清除", role: .destructive) { clearCache() }
+            Button("仅本地", role: .destructive) {
+                clearCache(includeServer: false)
+            }
+            Button("本地 + 服务端", role: .destructive) {
+                clearCache(includeServer: true)
+            }
             Button("取消", role: .cancel) { }
         } message: {
-            Text("将删除全部已合成的音频，下次播放需要重新合成。")
+            Text("仅本地：删除本机已下载的音频文件。\n"
+                 + "本地 + 服务端：同时清空服务端 data/tts_cache 下的所有合成结果。\n"
+                 + "下次播放时需要重新合成。")
         }
+        .alert(
+            "清除失败",
+            isPresented: Binding(
+                get: { clearError != nil },
+                set: { if !$0 { clearError = nil } },
+            ),
+            actions: { Button("好") { clearError = nil } },
+            message: { Text(clearError ?? "") },
+        )
     }
 
     /// Human-readable form of the cache size readout. Uses ByteCountFormatter
@@ -185,13 +205,29 @@ struct SettingsView: View {
         cacheSizeBytes = playback.cache.currentSizeBytes()
     }
 
-    private func clearCache() {
+    /// Wipe local cache, optionally also the server's. Local always
+    /// runs first so a server failure (network down, auth wrong)
+    /// doesn't leave the user with neither side cleared. The cleared
+    /// state still reflects what actually happened.
+    private func clearCache(includeServer: Bool) {
         isClearing = true
         Task {
             try? await playback.cache.clear()
+            var failure: String?
+            if includeServer {
+                do {
+                    try await playback.api.clearServerTTSCache()
+                } catch {
+                    failure = (error as? LocalizedError)?.errorDescription
+                        ?? String(describing: error)
+                }
+            }
             await MainActor.run {
                 refreshCacheSize()
                 isClearing = false
+                if let failure = failure {
+                    clearError = "服务端清除失败（本地已清空）：\(failure)"
+                }
             }
         }
     }

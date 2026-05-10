@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
-from .api import books, chapters, health, tts
+from .api import books, chapters, characters, health, tts
 from .api.auth import require_auth
 from .config import get_settings
 from .keepalive import prevent_system_sleep
@@ -135,6 +135,7 @@ def create_app() -> FastAPI:
     protected = [Depends(require_auth)]
     app.include_router(books.router, dependencies=protected)
     app.include_router(chapters.router, dependencies=protected)
+    app.include_router(characters.router, dependencies=protected)
     app.include_router(tts.router, dependencies=protected)
     return app
 

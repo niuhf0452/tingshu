@@ -22,6 +22,7 @@ iOS's AVAudioFile without code changes.
 """
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -33,6 +34,9 @@ from ..core.storage import BookRepository
 from ..core.voice import SpeakerResolutionError, resolve_speaker
 from ..services.tts import NoSpeakerError, TTSService
 from .deps import get_repository, get_tts_service, get_voice_library
+
+
+log = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api", tags=["tts"])
@@ -102,6 +106,30 @@ async def synthesize(
             "Cache-Control": "public, max-age=31536000",  # deterministic by params
         },
     )
+
+
+@router.delete("/tts/cache", status_code=204)
+async def clear_tts_cache(
+    tts: Annotated[TTSService, Depends(get_tts_service)],
+) -> Response:
+    """Wipe every server-side cached audio file.
+
+    Used by the iOS settings page's "本地 + 服务端" clear option after
+    repeated character-voice edits leave a long tail of orphan entries
+    that the per-book client-side eviction can't reach.
+
+    Filesystem-level ``.m4a`` removal — the directory itself stays
+    (``main.lifespan`` creates it at startup). In-flight ``put`` calls
+    racing this finish via atomic-rename, so a concurrent synth lands
+    a fresh entry rather than corrupting one.
+
+    Runs in the threadpool because a populated cache can hold tens of
+    thousands of files; ``Path.iterdir`` + per-file ``unlink`` blocks
+    the loop otherwise.
+    """
+    removed = await run_in_threadpool(tts.cache.clear)
+    log.info("server tts cache cleared: removed=%d files", removed)
+    return Response(status_code=204)
 
 
 def _sniff_media_type(audio: bytes) -> str:

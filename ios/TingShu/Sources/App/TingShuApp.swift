@@ -39,6 +39,14 @@ struct TingShuApp: App {
         #if canImport(UIKit)
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .default, options: [])
+        // Hint to iOS that we're long-form spoken audio and would
+        // prefer notification / alert sounds NOT interrupt us — the
+        // user is in the middle of a chapter, not a 5-second clip.
+        // Phone calls and Siri still take priority (system reserves
+        // those), but Slack/IM/calendar pings now duck or play
+        // through without pausing playback. iOS 14.5+; the throw is
+        // benign on older OSes (we ship iOS 17 anyway).
+        try? session.setPrefersNoInterruptionsFromSystemAlerts(true)
         try? session.setActive(true)
         UIApplication.shared.beginReceivingRemoteControlEvents()
         #endif

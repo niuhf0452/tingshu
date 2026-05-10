@@ -22,6 +22,9 @@
 		D5A2A0FEF0D08F55EE3267BE /* PlaybackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 525AE2DB7309D3CDD63E261B /* PlaybackService.swift */; };
 		D6D1E27388016C8B57A91DA2 /* BookLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF73EECD23879AB9047BE23 /* BookLibrary.swift */; };
 		DA8033982F9E1022006A6851 /* ChapterPaginator.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA8033972F9E1022006A6851 /* ChapterPaginator.swift */; };
+		DA8CC50E2FB0370C006180CD /* PlayerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA8CC50C2FB0370C006180CD /* PlayerSettingsView.swift */; };
+		DA8CC5102FB046FB006180CD /* CharacterEditView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA8CC50F2FB046FB006180CD /* CharacterEditView.swift */; };
+		DA8CC5122FB04710006180CD /* CharacterListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA8CC5112FB04710006180CD /* CharacterListView.swift */; };
 		ECB93BF6B0AA7126586D42A5 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A876B3D9CD3625A0EE69CA0 /* SettingsStore.swift */; };
 		F9BC7EFD09BF5327B61F41F4 /* BookshelfView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C79CCE569E03EE8C5E1DD90 /* BookshelfView.swift */; };
 /* End PBXBuildFile section */
@@ -43,6 +46,9 @@
 		C9F954C891F9EDE05FBBE9AA /* TingShuApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TingShuApp.swift; sourceTree = "<group>"; };
 		D3BFD1F8934683DB734377D8 /* TingShu.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TingShu.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DA8033972F9E1022006A6851 /* ChapterPaginator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterPaginator.swift; sourceTree = "<group>"; };
+		DA8CC50C2FB0370C006180CD /* PlayerSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerSettingsView.swift; sourceTree = "<group>"; };
+		DA8CC50F2FB046FB006180CD /* CharacterEditView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterEditView.swift; sourceTree = "<group>"; };
+		DA8CC5112FB04710006180CD /* CharacterListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterListView.swift; sourceTree = "<group>"; };
 		FBF73EECD23879AB9047BE23 /* BookLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookLibrary.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -76,6 +82,9 @@
 		187B9BDAA5C775B9FC8DFFC3 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				DA8CC5112FB04710006180CD /* CharacterListView.swift */,
+				DA8CC50F2FB046FB006180CD /* CharacterEditView.swift */,
+				DA8CC50C2FB0370C006180CD /* PlayerSettingsView.swift */,
 				5C79CCE569E03EE8C5E1DD90 /* BookshelfView.swift */,
 				BB65D5641C6964D0AAFAB0C7 /* Platform.swift */,
 				1097D437FDB1B7A2D891F26D /* PlayerView.swift */,
@@ -212,8 +221,11 @@
 				500E3AD5F026FAD9DCADC8F1 /* PlayerView.swift in Sources */,
 				B7C2A1D4E8F9405A6B12C8D5 /* ProgressStore.swift in Sources */,
 				ECB93BF6B0AA7126586D42A5 /* SettingsStore.swift in Sources */,
+				DA8CC5122FB04710006180CD /* CharacterListView.swift in Sources */,
+				DA8CC50E2FB0370C006180CD /* PlayerSettingsView.swift in Sources */,
 				681C798D62169F7ABDD9CB25 /* SettingsView.swift in Sources */,
 				7DA7AA9D375F949CE67F04CB /* TTSCache.swift in Sources */,
+				DA8CC5102FB046FB006180CD /* CharacterEditView.swift in Sources */,
 				2EACE08C18F5F40436E1A2BC /* TingShuApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

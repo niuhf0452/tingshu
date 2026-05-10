@@ -142,6 +142,32 @@ actor TTSCache {
         persistIndex()
     }
 
+    /// Drop every cached entry whose ``coord.bookId`` matches.
+    ///
+    /// Used after a character edit invalidates the matched speaker for
+    /// a book: the cache key is ``(bookId, characterId, text)`` so the
+    /// stale local audio would otherwise shadow the server's freshly
+    /// re-synthesised voice. Other books' entries stay put.
+    ///
+    /// Orphan files (no index entry — typically pre-index installs or
+    /// a wiped index file) can't be attributed to a book here, so they
+    /// stay. The eviction policy already prefers them as evict-first
+    /// candidates, so they don't accumulate over time.
+    func evict(bookId: String) {
+        let fm = FileManager.default
+        var keysToDrop: [String] = []
+        for (key, coord) in index where coord.bookId == bookId {
+            keysToDrop.append(key)
+        }
+        guard !keysToDrop.isEmpty else { return }
+        for key in keysToDrop {
+            try? fm.removeItem(at: fileURL(for: key))
+            index.removeValue(forKey: key)
+        }
+        indexDirty = true
+        persistIndex()
+    }
+
     // MARK: - helpers
 
     private func fileURL(for key: String) -> URL {

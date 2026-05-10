@@ -146,6 +146,53 @@ actor APIClient {
         try ensureOK(response: response, body: data)
     }
 
+    // MARK: - Server-side TTS cache
+
+    /// Wipe the server's TTS audio cache (``server/data/tts_cache/``).
+    /// Returns when the server has finished — populated caches with
+    /// tens of thousands of files can take several seconds, so the
+    /// timeout is generous. The directory survives; only ``.m4a`` and
+    /// stale ``.tmp`` files are removed.
+    func clearServerTTSCache() async throws {
+        let url = try resolve(path: "/api/tts/cache")
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 60
+        applyAuth(&request)
+        let (data, response) = try await session.data(for: request)
+        try ensureOK(response: response, body: data)
+    }
+
+    // MARK: - Book characters (cumulative roster — see server §2.3)
+
+    /// List the cumulative book character roster (narrator slots
+    /// filtered out server-side). Empty list if no chapter has been
+    /// analysed yet — the player-settings screen surfaces that as "尚
+    /// 无识别到的角色". 404 only on unknown book.
+    func bookCharacters(bookId: String) async throws -> [Character] {
+        return try await getJSON(path: "/api/books/\(bookId)/characters", timeout: 10)
+    }
+
+    /// Patch one character's matcher inputs (gender / age / personality).
+    /// Only the fields set on ``update`` are sent; the server preserves
+    /// the rest. Server may block briefly on the per-book lock if a
+    /// chapter analysis is mid-merge — never fails on contention.
+    func updateBookCharacter(
+        bookId: String, characterId: Int, update: CharacterUpdate,
+    ) async throws -> Character {
+        let url = try resolve(path: "/api/books/\(bookId)/characters/\(characterId)")
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Match the server's worst-case lock-wait (a chapter merge
+        // typically completes in <1 s but the surrounding LLM calls
+        // outside the lock can stretch the perceived wait).
+        request.timeoutInterval = 30
+        applyAuth(&request)
+        request.httpBody = try encoder.encode(update)
+        return try await sendAndDecode(request: request)
+    }
+
     // MARK: - Chapter metadata (SSE)
 
     /// Consume the chapter-meta SSE stream and return the final

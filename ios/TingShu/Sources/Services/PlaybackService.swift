@@ -132,7 +132,11 @@ final class PlaybackState: ObservableObject {
 final class PlaybackService: ObservableObject {
     let state = PlaybackState()
 
-    private let api: APIClient
+    /// Read-only access for the Settings pages (e.g. the player-
+    /// settings character list calls ``api.bookCharacters``). Internal
+    /// playback path still uses this same instance — no separate
+    /// client.
+    let api: APIClient
     private let store: BookStore
     /// Read-only access for the Settings page (display + clear). Internal
     /// playback path still uses this same instance — no separate cache.
@@ -230,6 +234,18 @@ final class PlaybackService: ObservableObject {
     private var stateForwarding: AnyCancellable?
     /// Subscription that debounce-writes ``state.position`` to SwiftData.
     private var positionPersistSink: AnyCancellable?
+    /// AVAudioSession route-change observer — pauses playback when the
+    /// active output device disappears (headphone unplug, BT disconnect)
+    /// so the lock-screen play/pause icon flips to "play" instead of
+    /// staying stuck on "pause" while audio is silent.
+    private var routeChangeObserver: NSObjectProtocol?
+    /// AVAudioSession interruption observer — pauses playback when the
+    /// system interrupts us (phone call, Siri, the rare alert that
+    /// slips past ``setPrefersNoInterruptionsFromSystemAlerts``). iOS
+    /// stops audio output behind our back; without this, ``state.isPlaying``
+    /// stays true and the UI / lock-screen toggle keeps showing pause
+    /// over silent output.
+    private var interruptionObserver: NSObjectProtocol?
 
     init(
         api: APIClient,
@@ -268,6 +284,17 @@ final class PlaybackService: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] _ in self?.applyPlaybackSpeed() }
         setupRemoteCommands()
+        setupRouteChangeObserver()
+        setupInterruptionObserver()
+    }
+
+    deinit {
+        if let token = routeChangeObserver {
+            NotificationCenter.default.removeObserver(token)
+        }
+        if let token = interruptionObserver {
+            NotificationCenter.default.removeObserver(token)
+        }
     }
 
     // MARK: - public API
@@ -625,6 +652,45 @@ final class PlaybackService: ObservableObject {
         state.cachedSentencesInBrowseChapter = []
         refreshCachedSentencesForBrowseChapter()
         updateNowPlaying()
+    }
+
+    /// Drop every cached audio file for ``bookId`` and reset the
+    /// in-memory state that referenced those files. Used after a user
+    /// edits a book character — the matched speaker may have changed
+    /// server-side, but the local cache key is
+    /// ``(bookId, characterId, text)`` and would otherwise replay the
+    /// old voice from disk.
+    ///
+    /// Does NOT interrupt the currently playing sentence: the audio
+    /// is already loaded into the AVAudioEngine's playerNode, so it
+    /// finishes naturally. The next sentence's prefetch starts fresh
+    /// against the now-empty cache, hits the server, and writes new
+    /// audio under the same key.
+    ///
+    /// Cancels any in-flight prefetch worker first — its pending HTTP
+    /// requests may have started before the server-side patch landed
+    /// and could write old-voice audio into the slot we're about to
+    /// evict. ``runPrefetchWorker`` handles ``CancellationError`` by
+    /// exiting cleanly without failing already-waiting continuations,
+    /// so the player loop's pending awaits stay alive and resume from
+    /// the new worker we kick off after the eviction completes.
+    func invalidateBookAudio(bookId: String) async {
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        if book?.bookId == bookId {
+            prefetchedURLs.removeAll()
+        }
+        await cache.evict(bookId: bookId)
+        // Browse-chapter cached-set ("which sentences are pre-rendered")
+        // is now stale; recompute against the freshly-evicted cache so
+        // the prefetch progress bar shows reality. Safe to call when
+        // the user is on a different screen — the @Published just
+        // updates state for whoever reads it next.
+        state.cachedSentencesInBrowseChapter = []
+        refreshCachedSentencesForBrowseChapter()
+        // Restart the worker if there's pending playback (subscribers
+        // waiting on slots, or the player loop will fetch shortly).
+        startPrefetchWorkerIfNeeded()
     }
 
     /// Recompute which sentences in the **browse** chapter have their
@@ -1306,6 +1372,61 @@ final class PlaybackService: ObservableObject {
         cc.previousTrackCommand.addTarget { [weak self] _ in
             Task { @MainActor in await self?.gotoChapter(offset: -1) }
             return .success
+        }
+        #endif
+    }
+
+    /// Pause when the system interrupts our audio session — phone
+    /// call, Siri, FaceTime, and the rare alert that slips past
+    /// ``setPrefersNoInterruptionsFromSystemAlerts`` (the API call in
+    /// ``TingShuApp.init`` that asks iOS to keep notification sounds
+    /// from cutting in). iOS stops AVAudioEngine output on its own
+    /// during the interruption; we mirror that into ``state.isPlaying``
+    /// so the play button + lock-screen toggle update.
+    ///
+    /// We do NOT auto-resume on ``.ended`` even when the system sets
+    /// ``shouldResume`` — for an audiobook the user typically wants
+    /// to decide whether to keep going, and silently restarting after
+    /// a phone call surprises people more than it helps.
+    private func setupInterruptionObserver() {
+        #if canImport(UIKit)
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: .main,
+        ) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: raw),
+                  type == .began else { return }
+            Task { @MainActor [weak self] in
+                guard let self = self, self.state.isPlaying else { return }
+                self.pause()
+            }
+        }
+        #endif
+    }
+
+    /// Pause when the active output route disappears (headphone unplug,
+    /// Bluetooth disconnect). iOS automatically silences the engine in
+    /// that case, but `state.isPlaying` and `MPNowPlayingInfoCenter`
+    /// stay in their "playing" state — so the lock-screen toggle would
+    /// otherwise keep showing pause-icon over silent audio. Mirrors the
+    /// system Music app: pause on disconnect, do NOT auto-resume on
+    /// reconnect.
+    private func setupRouteChangeObserver() {
+        #if canImport(UIKit)
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main,
+        ) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
+                  reason == .oldDeviceUnavailable else { return }
+            Task { @MainActor [weak self] in
+                guard let self = self, self.state.isPlaying else { return }
+                self.pause()
+            }
         }
         #endif
     }

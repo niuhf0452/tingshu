@@ -169,6 +169,27 @@ struct UploadResponse: Codable, Sendable {
     }
 }
 
+/// Partial update for ``PATCH /api/books/{book_id}/characters/{id}``.
+/// Only fields the user actually changed are sent — the server preserves
+/// any field absent from the body. Mirrors ``CharacterUpdate`` on the
+/// server (``server/app/core/models.py``).
+struct CharacterUpdate: Codable, Sendable {
+    var gender: Gender?
+    var age: Age?
+    var personality: [Personality]?
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(gender, forKey: .gender)
+        try c.encodeIfPresent(age, forKey: .age)
+        try c.encodeIfPresent(personality, forKey: .personality)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case gender, age, personality
+    }
+}
+
 struct TTSRequest: Codable, Sendable {
     let bookId: String
     let chapterId: Int
