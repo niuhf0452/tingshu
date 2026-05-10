@@ -58,8 +58,13 @@ async def synthesize(
             detail="voice library is empty — populate data/voices/speakers.json",
         )
 
-    # Look up book characters only when needed (book character path).
-    # Narrator path doesn't read characters.json at all.
+    # Look up book characters only when needed.
+    # - id ∈ [0, 15]: narrator slot — no roster lookup.
+    # - id >= 16: book character — read characters.json.
+    # - id < 0: chapter-local **incidental** (路人1, 路人2, ...) — these
+    #   live ONLY in the chapter snapshot, not in characters.json. Load
+    #   the meta for this specific chapter and pull the incidental's
+    #   profile from there.
     book_characters = []
     if req.character_id > 15:
         try:
@@ -68,6 +73,18 @@ async def synthesize(
             raise HTTPException(
                 status_code=404, detail=f"book {req.book_id} not found",
             ) from exc
+    elif req.character_id < 0:
+        chapter_meta = repo.load_chapter_meta(req.book_id, req.chapter_id)
+        if chapter_meta is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"chapter meta missing for book={req.book_id} "
+                    f"chapter={req.chapter_id} (incidental id "
+                    f"{req.character_id} cannot be resolved)"
+                ),
+            )
+        book_characters = chapter_meta.characters
 
     try:
         speaker = resolve_speaker(

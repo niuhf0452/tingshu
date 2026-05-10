@@ -148,9 +148,14 @@ def build_segment_chapter_messages(
         "- s = 说话人名字\n"
         f"- o = tone ∈ [{tones}]\n\n"
         "============= 切分规则 =============\n\n"
-        "1. 切分单位 = **单一说话人 + 一句话**：\n"
+        "1. 切分单位 = **单一说话人 + 一段不超过 50 字的可朗读文本**：\n"
         "   - 说话人变化必须切开。\n"
         "   - 同一说话人的连续多句，按句末标点（。！？…）切成多个片段，**不要合并**。\n"
+        "   - 单句过长时（含逗号但只有一个句末标点，整体超过 50 字）：\n"
+        "     允许在逗号 / 顿号（，、）处再切。**目标是尽量把片段填到接近 50 字**，\n"
+        "     不要逐逗号机械切分。例如「a，b，c。」三个短句加起来 ≤ 50 字时，整段做\n"
+        "     一个片段；超过 50 字才在某个逗号后切开，使前后两半都尽可能接近 50 字。\n"
+        "   - 50 字是软上限，不强求精确（45-55 字都算合格）；中文标点也按 1 字计。\n"
         "2. 说话人由你结合上下文自主判断（叙述者归「旁白」，角色对话 / 内心独白\n"
         "   归对应角色）。\n"
         "3. **不得遗漏任何可朗读内容**。章节里每一段汉字都必须进入某个片段。\n"
@@ -162,8 +167,10 @@ def build_segment_chapter_messages(
         "============= 说话人规则 =============\n\n"
         "- 叙述用「旁白」\n"
         "- 已知角色（下方列表）：复用列表里的名字；不同称呼映射回同一名字\n"
-        "- 全新角色：自取一个稳定名字（有全名用全名，否则用称号）。\n"
-        "  不要用「他/她/那人」等代词作为 s\n\n"
+        "- **下方列表已经是本章的完整角色登记表**（含主要角色 + 临时角色），\n"
+        "  你不应该在 s 字段里出现列表外的名字。\n"
+        "  如果某句话的说话人在列表里找不到（罕见，通常是分析遗漏），\n"
+        "  **直接归「旁白」**，不要自行造名字。\n\n"
         "============= 输出格式示例 =============\n\n"
         "示例 1：单句对话 —— 引号去掉\n"
         "原文：他心中暗道，\"但话说回来，这女子长得虽然不坏。\"\n"
@@ -190,6 +197,17 @@ def build_segment_chapter_messages(
         '{"t":"小子，别急。","s":"药老","o":"gentle"}\n'
         '{"t":"萧炎抬头，沉声道:","s":"旁白","o":"neutral"}\n'
         '{"t":"我明白。","s":"萧炎","o":"serious"}\n\n'
+        "示例 5：短逗号串不切 / 长逗号串才切\n"
+        "原文 5a（22 字，整句不到 50 字 → 整段做一个片段，**不要**逐逗号切）：\n"
+        "    他抬起头，望着远方，长叹了一口气。\n"
+        "切分：\n"
+        '{"t":"他抬起头，望着远方，长叹了一口气。","s":"旁白","o":"neutral"}\n\n'
+        "原文 5b（>50 字，单一句号 → 在逗号处切，让前后两半都接近 50 字）：\n"
+        "    他想起当年师父站在山门口送别时的神情，那双布满老茧的手颤抖着拍了拍他的肩，\n"
+        "    什么也没说，却让自己永生难忘。\n"
+        "切分（在合适的逗号处切一刀，**不**逐逗号切）：\n"
+        '{"t":"他想起当年师父站在山门口送别时的神情，那双布满老茧的手颤抖着拍了拍他的肩，","s":"旁白","o":"neutral"}\n'
+        '{"t":"什么也没说，却让自己永生难忘。","s":"旁白","o":"neutral"}\n\n'
         f"**o 必须是上面列出的 {len(list(Tone))} 个枚举之一；其它值会被丢弃为 neutral。**\n\n"
         "============= 已知角色 =============\n\n"
         f"{char_lines}\n\n"
@@ -229,8 +247,8 @@ def build_classify_chapter_characters_messages(
     user = (
         "请通读章节正文，识别本章涉及的所有 **非旁白** 角色，并对每个角色"
         "判断其状态。输出 NDJSON，每个角色一行 JSON 对象。\n\n"
-        "============= 三种状态 =============\n\n"
-        '(a) 全新角色（不在已知列表里）：\n'
+        "============= 四种状态 =============\n\n"
+        '(a) 全新具名角色（专有名字，不在已知列表里）：\n'
         '    {"k":"new","n":"角色名"}\n'
         '    **只输出名字**，不输出画像 —— 完整画像将由后续步骤根据该角色\n'
         '    在全书中的首次登场上下文生成。\n\n'
@@ -242,26 +260,47 @@ def build_classify_chapter_characters_messages(
         "    · 身份重大变化（弟子→长老；普通人→帝王；活人→魂体等）\n"
         "    · 性格显著转变（胆怯→勇敢；冷静→暴怒等）\n"
         "    · identity 描述需要修订以反映新身份\n\n"
-        "(c) 已知角色无显著变化：**不要输出**。\n"
-        "(d) 旁白：**不要输出**（旁白固定，不参与角色画像）。\n\n"
+        '(c) **临时角色**（仅本章出现的「描述性称呼」说话人，没有专有名）：\n'
+        '    {"k":"incidental","c":"妇人","g":"...","a":"...",'
+        '"p":[...],"i":"..."}\n'
+        "    适用情形：\n"
+        "    · 用通用称呼指代，没有具体名字。例：妇人、男子、老者、婢女、\n"
+        "      路人、店小二、仆人、士兵、乞丐、客人 等\n"
+        "    · 一般只在本章出现一次或几次，不是贯穿全书的角色\n"
+        "    · 后续章节里不会再以同一个称呼引用同一个个体\n"
+        "    判断分界：\n"
+        "    · 如果文本给了专有名字（萧炎、林黛玉、李四王）→ 当成 (a) new\n"
+        "    · 如果只有称呼（妇人、男子甲、那个老人）→ 当成 (c) incidental\n"
+        "    · 如果同一称呼在前几章已出现过且当成具名角色处理 → 复用已知名字，\n"
+        "      考虑 (b) evolved 而非 (c) incidental\n"
+        "    画像必须直接给全（性别 / 年龄段 / 性格 / 身份），无需后续补充。\n\n"
+        "(d) 已知角色无显著变化：**不要输出**。\n"
+        "(e) 旁白：**不要输出**（旁白固定，不参与角色画像）。\n\n"
         "============= 字段说明 =============\n\n"
-        "- k = kind ∈ [new, evolved]\n"
+        "- k = kind ∈ [new, evolved, incidental]\n"
         "- n = name（仅 new 用），自取一个稳定名字（有全名用全名，否则用称号），\n"
         "  不要用「他/她/那人」等代词\n"
-        "- c = character name（仅 evolved 用），必须复用已知列表里的那个名字\n"
-        "  （可由 identity 推理别名归并 —— 例如「萧家少主」身份是主角 → 「萧炎」）\n"
+        "- c = character name（evolved 复用已知名；incidental 用文中出现的描述性\n"
+        "  称呼，例如「妇人」「老者」「婢女」；同一章节里不同 incidental 必须用\n"
+        "  不同的 c 以便切分时区分）\n"
         f"- g = gender ∈ [{genders}]\n"
         f"- a = age ∈ [{ages}]\n"
         f"- p = personality 数组，1-3 个 ∈ [{personalities}]\n"
         "- i = identity，一句话身份描述（≤30 字）\n\n"
         "**名字一致性要求**：你在这里输出的角色名（n 或 c），将在后续的"
-        "朗读片段切分中作为说话人标识。请确保切分时也使用完全相同的名字。\n\n"
+        "朗读片段切分中作为说话人标识。请确保切分时也使用完全相同的名字 —— "
+        "包括 incidental 的描述性称呼也要原样使用。\n\n"
         "============= 输出示例 =============\n\n"
-        "假设本章首次出现「药老」「美杜莎」，且已知角色「萧炎」从少年长成青年：\n"
+        "假设本章首次出现「药老」「美杜莎」，已知「萧炎」从少年长成青年；\n"
+        "另有一名只出现一次的妇人开口说话，和一名仆人通报：\n"
         '{"k":"new","n":"药老"}\n'
         '{"k":"new","n":"美杜莎"}\n'
         '{"k":"evolved","c":"萧炎","g":"male","a":"young_adult",'
-        '"p":["determined","wise"],"i":"青年弟子，主角，已突破斗师境"}\n\n'
+        '"p":["determined","wise"],"i":"青年弟子，主角，已突破斗师境"}\n'
+        '{"k":"incidental","c":"妇人","g":"female","a":"adult",'
+        '"p":["gentle"],"i":"路边妇人，关切问询"}\n'
+        '{"k":"incidental","c":"仆人","g":"male","a":"adult",'
+        '"p":["timid"],"i":"萧家家仆，前来通报"}\n\n'
         "============= 已知角色（带当前画像） =============\n\n"
         f"{char_lines}\n\n"
         "============= 章节正文 =============\n\n"
@@ -269,7 +308,7 @@ def build_classify_chapter_characters_messages(
         f"{chapter_text}\n"
         "</novel_chapter_input>\n\n"
         "**严格输出 NDJSON，每行一个 JSON 对象。不要 ```代码块包裹，不要其他文字。**\n"
-        "如果本章没有任何新角色 / 演变，输出空响应即可（0 行）。"
+        "如果本章没有任何新角色 / 演变 / 临时角色，输出空响应即可（0 行）。"
     )
     return [
         {"role": "system", "content": CHARACTER_ANALYSIS_SYSTEM},
@@ -444,14 +483,20 @@ def parse_classified_characters(raw: str) -> ClassifiedCharacters:
     - ``{"k":"new","n":"name"}`` → appended to ``new_names``
     - ``{"k":"evolved", c/g/a/p/i...}`` → parsed as a Character and
       appended to ``evolved``
+    - ``{"k":"incidental", c/g/a/p/i...}`` → parsed as a Character with
+      the LLM-given descriptive name (e.g. "妇人") and appended to
+      ``incidentals``. The service layer renames + assigns a chapter-
+      local negative id later.
 
-    Lines without a recognised ``k`` are skipped. Empty input is fine —
-    a chapter with only narrator-side narration produces no character
-    classifications.
+    Lines without a recognised ``k`` are skipped. Incidentals are
+    deduped by name within this chapter so an LLM that emits "妇人"
+    twice doesn't produce two parallel entries.
     """
     new_names: list[str] = []
     new_seen: set[str] = set()
     evolved: list[Character] = []
+    incidentals: list[Character] = []
+    incidental_seen: set[str] = set()
     bad_lines = 0
 
     for line in raw.splitlines():
@@ -478,6 +523,11 @@ def parse_classified_characters(raw: str) -> ClassifiedCharacters:
             char = _parse_character_update(obj)
             if char is not None:
                 evolved.append(char)
+        elif kind == "incidental":
+            char = _parse_character_update(obj)
+            if char is not None and char.name not in incidental_seen:
+                incidentals.append(char)
+                incidental_seen.add(char.name)
         else:
             bad_lines += 1
 
@@ -486,7 +536,9 @@ def parse_classified_characters(raw: str) -> ClassifiedCharacters:
             "classify_chapter_characters: skipped %d unparseable NDJSON lines",
             bad_lines,
         )
-    return ClassifiedCharacters(new_names=new_names, evolved=evolved)
+    return ClassifiedCharacters(
+        new_names=new_names, evolved=evolved, incidentals=incidentals,
+    )
 
 
 def parse_character_updates(raw: str) -> list[Character]:

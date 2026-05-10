@@ -11,6 +11,7 @@ from app.services.llm_prompts import (
     format_known_characters_full,
     parse_character_updates,
     parse_chapter_detection,
+    parse_classified_characters,
     parse_segmented_chapter,
 )
 
@@ -263,3 +264,90 @@ class TestFormatKnownCharactersBrief:
         assert "gender=" not in out
         assert "age=" not in out
         assert "personality=" not in out
+
+
+# --- parse_classified_characters (three-bucket NDJSON: new/evolved/incidental) ---
+
+
+class TestParseClassifiedCharacters:
+    def test_new_only(self):
+        raw = '{"k":"new","n":"药老"}\n{"k":"new","n":"美杜莎"}\n'
+        result = parse_classified_characters(raw)
+        assert result.new_names == ["药老", "美杜莎"]
+        assert result.evolved == []
+        assert result.incidentals == []
+
+    def test_evolved_only(self):
+        raw = (
+            '{"k":"evolved","c":"萧炎","g":"male","a":"youth",'
+            '"p":["determined"],"i":"已突破斗师境"}\n'
+        )
+        result = parse_classified_characters(raw)
+        assert result.new_names == []
+        assert len(result.evolved) == 1
+        assert result.evolved[0].name == "萧炎"
+        assert result.evolved[0].age == Age.YOUTH
+
+    def test_incidental_parsed_with_full_profile(self):
+        raw = (
+            '{"k":"incidental","c":"妇人","g":"female","a":"adult",'
+            '"p":["gentle"],"i":"路边妇人"}\n'
+        )
+        result = parse_classified_characters(raw)
+        assert result.new_names == []
+        assert result.evolved == []
+        assert len(result.incidentals) == 1
+        inc = result.incidentals[0]
+        assert inc.name == "妇人"
+        assert inc.gender == Gender.FEMALE
+        assert inc.age == Age.ADULT
+        assert inc.personality == [Personality.GENTLE]
+        assert inc.identity == "路边妇人"
+        # id is a placeholder until service.py assigns the chapter-local
+        # negative id.
+        assert inc.id == 0
+
+    def test_three_buckets_in_one_response(self):
+        raw = (
+            '{"k":"new","n":"药老"}\n'
+            '{"k":"evolved","c":"萧炎","g":"male","a":"youth",'
+            '"p":["wise"],"i":"成长"}\n'
+            '{"k":"incidental","c":"仆人","g":"male","a":"adult",'
+            '"p":["timid"],"i":"萧家仆人"}\n'
+            '{"k":"incidental","c":"妇人","g":"female","a":"elder",'
+            '"p":["kind"],"i":"卖菜老妇"}\n'
+        )
+        result = parse_classified_characters(raw)
+        assert result.new_names == ["药老"]
+        assert [c.name for c in result.evolved] == ["萧炎"]
+        assert [c.name for c in result.incidentals] == ["仆人", "妇人"]
+
+    def test_incidental_dedup_by_name(self):
+        """LLM occasionally emits the same descriptor twice; keep only
+        the first."""
+        raw = (
+            '{"k":"incidental","c":"妇人","g":"female","a":"adult",'
+            '"p":["gentle"],"i":"first"}\n'
+            '{"k":"incidental","c":"妇人","g":"female","a":"adult",'
+            '"p":["timid"],"i":"second"}\n'
+        )
+        result = parse_classified_characters(raw)
+        assert len(result.incidentals) == 1
+        assert result.incidentals[0].identity == "first"
+
+    def test_unknown_kind_skipped(self):
+        raw = (
+            '{"k":"new","n":"药老"}\n'
+            '{"k":"weird","c":"???"}\n'
+            '{"k":"incidental","c":"妇人","g":"female","a":"adult",'
+            '"p":["gentle"],"i":"x"}\n'
+        )
+        result = parse_classified_characters(raw)
+        assert result.new_names == ["药老"]
+        assert [c.name for c in result.incidentals] == ["妇人"]
+
+    def test_empty_returns_empty_buckets(self):
+        result = parse_classified_characters("")
+        assert result.new_names == []
+        assert result.evolved == []
+        assert result.incidentals == []

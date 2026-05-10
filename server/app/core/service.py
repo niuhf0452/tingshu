@@ -231,7 +231,8 @@ class BookService:
         new_profiles = self.llm.profile_new_characters(name_to_contexts, known)
         a3_elapsed = time.monotonic() - t_a3
 
-        # A4: merge evolved + new into the roster, save.
+        # A4: merge evolved + new into the roster, save. Incidentals are
+        # **not** merged — they're chapter-local one-offs.
         with book_lock:
             # Reload in case another concurrent chapter job updated the
             # global table while our LLM calls were in flight.
@@ -242,17 +243,45 @@ class BookService:
             )
             self.repo.save_characters(book_id, updated_known)
 
+        # Build chapter-local incidentals: descriptor-named one-off
+        # speakers from A1, with chapter-local **negative** ids. The
+        # ``id < 0`` test is the canonical way to identify an
+        # incidental anywhere in the system — never the name. The
+        # name is just whatever descriptor the LLM emitted (妇人, 仆人,
+        # 店小二, …) and is purely user-facing.
+        #
+        # Defence: if the LLM emits an incidental whose name collides
+        # with a real character (just-merged into the roster), drop the
+        # incidental — the real character wins, since it has a stable
+        # cross-chapter id.
+        roster_names = {c.name for c in updated_known}
+        chapter_incidentals: list[Character] = []
+        for profile in classified.incidentals:
+            if not profile.name or profile.name in roster_names:
+                continue
+            chapter_incidentals.append(Character(
+                id=-(len(chapter_incidentals) + 1),
+                name=profile.name,
+                identity=profile.identity,
+                gender=profile.gender,
+                age=profile.age,
+                personality=list(profile.personality),
+            ))
+
         # ---- Phase B: segmentation ----
         t_b = time.monotonic()
-        analyzed_sentences = self.llm.segment_chapter(chapter_text, updated_known)
+        analyzed_sentences = self.llm.segment_chapter(
+            chapter_text, updated_known + chapter_incidentals,
+        )
         b1_elapsed = time.monotonic() - t_b
 
         with book_lock:
             # Reload once more so the speaker→id resolution sees the
             # latest roster (concurrent chapters may have added more).
+            # Incidentals are not in the roster — pass them alongside.
             roster = self.repo.load_characters(book_id)
             speaker_to_id, chapter_chars = reconcile_chapter_speakers(
-                known=roster,
+                known=roster + chapter_incidentals,
                 speakers=[s.speaker for s in analyzed_sentences],
             )
             sentences = locate_sentences(
@@ -261,12 +290,13 @@ class BookService:
             chapter_meta = ChapterMeta(sentences=sentences, characters=chapter_chars)
             self.repo.save_chapter_meta(book_id, chapter_id, chapter_meta)
 
+        incidental_count = sum(1 for c in chapter_chars if c.id < 0)
         log.info(
             "analyze_chapter done: book=%s ch=%d sentences=%d "
-            "chapter_chars=%d new=%d evolved=%d "
+            "chapter_chars=%d new=%d evolved=%d incidental=%d "
             "wall_a1=%.1fs wall_a3=%.1fs wall_b1=%.1fs total=%.1fs",
             book_id, chapter_id, len(sentences), len(chapter_chars),
-            new_count, evolved_count,
+            new_count, evolved_count, incidental_count,
             a1_elapsed, a3_elapsed, b1_elapsed, time.monotonic() - t0,
         )
         return chapter_meta
