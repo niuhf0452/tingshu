@@ -6,8 +6,7 @@ Behaviour:
   a small regex heuristic over the opening.
 - ``classify_chapter_characters`` walks the chapter text, identifies any
   speaker name that isn't in ``known_characters``, and lists them in
-  ``new_names``. ``evolved`` is always empty (the stub doesn't try to
-  detect character growth).
+  ``new_names``.
 - ``profile_new_characters`` returns a deterministic profile (SHA-1
   based) per name so tests can exercise the discovery + merge path
   without a real LLM.
@@ -77,11 +76,10 @@ class StubLLMClient(LLMClient):
     ) -> ClassifiedCharacters:
         """Walk the chapter, find any non-narrator speaker name not
         already in ``known_characters``, and return them as ``new_names``.
-        ``evolved`` is always empty — the stub doesn't try to detect
-        character growth (real LLM does)."""
+        The stub never emits incidentals."""
         known_names = {c.name for c in known_characters if c.id != 0}
         new_speakers = self._discover_new_speakers(chapter_text, known_names)
-        return ClassifiedCharacters(new_names=list(new_speakers), evolved=[])
+        return ClassifiedCharacters(new_names=list(new_speakers))
 
     def profile_new_characters(
         self,

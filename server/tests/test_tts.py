@@ -340,3 +340,42 @@ def test_endpoint_clear_cache_idempotent_on_empty(api_client, tts_service):
     assert r.status_code == 204
     r = api_client.delete("/api/tts/cache")
     assert r.status_code == 204
+
+
+# --- evict_to_limit (size-cap LRU eviction) ---
+
+
+def test_evict_to_limit_noop_under_cap(tmp_path: Path):
+    """Under the cap, evict_to_limit removes nothing."""
+    cache = TTSCache(tmp_path / "c")
+    (cache.root / "a.m4a").write_bytes(b"x" * 100)
+    removed, freed = cache.evict_to_limit(max_bytes=1000)
+    assert (removed, freed) == (0, 0)
+    assert (cache.root / "a.m4a").exists()
+
+
+def test_evict_to_limit_removes_oldest_first(tmp_path: Path):
+    """Over the cap, oldest-mtime files go first, just until back under."""
+    import os
+
+    cache = TTSCache(tmp_path / "c")
+    for name, mtime in [("old.m4a", 1000), ("mid.m4a", 2000), ("new.m4a", 3000)]:
+        path = cache.root / name
+        path.write_bytes(b"x" * 100)
+        os.utime(path, (mtime, mtime))
+    # 300 bytes total, cap 250 — dropping the single oldest file is enough.
+    removed, freed = cache.evict_to_limit(max_bytes=250)
+    assert (removed, freed) == (1, 100)
+    assert not (cache.root / "old.m4a").exists()
+    assert (cache.root / "mid.m4a").exists()
+    assert (cache.root / "new.m4a").exists()
+
+
+def test_evict_to_limit_ignores_tmp_files(tmp_path: Path):
+    """In-flight .m4a.tmp partial writes are neither measured nor evicted."""
+    cache = TTSCache(tmp_path / "c")
+    (cache.root / "keep.m4a").write_bytes(b"x" * 100)
+    (cache.root / "partial.m4a.tmp").write_bytes(b"x" * 10_000)
+    removed, freed = cache.evict_to_limit(max_bytes=200)
+    assert (removed, freed) == (0, 0)
+    assert (cache.root / "partial.m4a.tmp").exists()

@@ -51,6 +51,14 @@ class TTSSection(BaseModel):
     voice_library: str = "data/voices/speakers.json"
     qwen3: Qwen3TTSSection = Field(default_factory=Qwen3TTSSection)
 
+    # Server-side TTS cache size cap. A background janitor sweeps the
+    # cache every ``cache_sweep_seconds`` and, when the directory
+    # exceeds ``cache_max_mb``, evicts the oldest files (by mtime, an
+    # approximate LRU) until it's back under the cap. Set
+    # ``cache_sweep_seconds`` to 0 to disable the janitor entirely.
+    cache_max_mb: int = 500
+    cache_sweep_seconds: int = 60
+
 
 class AuthSection(BaseModel):
     """Bearer-token-style authentication for the public API.

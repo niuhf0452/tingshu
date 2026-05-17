@@ -35,3 +35,7 @@ server/data/voices/prompts/*.txt
 
 # local config override
 config.yaml
+
+# generated artifacts from diagnostic scripts — HTML audio annotators,
+# waveform/spectrogram images, scan reports (see server/scripts/*.py)
+server/scripts/output/

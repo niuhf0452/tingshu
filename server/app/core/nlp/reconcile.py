@@ -7,7 +7,7 @@ therefore the simpler "post-segmentation" step:
 
 Given:
 - ``known``: the cumulative character roster (already includes any
-  new / evolved characters discovered earlier in this chapter).
+  new characters discovered earlier in this chapter).
 - ``speakers``: every speaker string from ``segment_chapter``'s output.
 
 Produce:
@@ -73,24 +73,27 @@ def reconcile_chapter_speakers(
     return speaker_to_id, chapter_characters
 
 
-def merge_character_updates(
+def merge_new_characters(
     *,
     known: list[Character],
-    updates: list[Character],
-) -> tuple[list[Character], int, int]:
-    """Apply Phase-A character updates to the cumulative roster.
+    new_characters: list[Character],
+) -> tuple[list[Character], int]:
+    """Append newly-discovered characters to the cumulative roster.
 
-    ``updates`` may contain:
-    - **new** characters (name not in ``known``) — appended with the
-      next available id.
-    - **evolved** characters (name in ``known``) — profile is overwritten
-      while id is preserved (this is how character "growth" works:
-      later chapters' voice matching sees the new attributes).
+    Each entry in ``new_characters`` is a profile produced by Phase A3
+    (``profile_new_characters``) and should carry a genuinely new name —
+    one not already in ``known``.
 
-    Narrator entries in ``updates`` are silently skipped — narrator is
-    fixed and doesn't carry a profile.
+    A name that **is** already in ``known`` is **skipped**, not merged:
+    a character's profile is fixed once established and chapters never
+    revise it. (Concurrent chapter analyses can occasionally re-classify
+    the same name as new before the roster save lands — keeping the
+    existing entry untouched is the safe resolution.)
 
-    Returns ``(updated_known, new_count, evolved_count)``.
+    Narrator entries are silently skipped — narrator is fixed and
+    doesn't carry a profile.
+
+    Returns ``(updated_known, new_count)``.
     """
     by_name: dict[str, Character] = {c.name: c for c in known}
     # Book characters always allocate from FIRST_BOOK_CHARACTER_ID (16)
@@ -103,36 +106,23 @@ def merge_character_updates(
     )
 
     new_count = 0
-    evolved_count = 0
 
-    for upd in updates:
-        name = upd.name.strip()
-        if not name or _is_narrator(name):
+    for cand in new_characters:
+        name = cand.name.strip()
+        if not name or _is_narrator(name) or name in by_name:
             continue
-        if name in by_name:
-            existing = by_name[name]
-            by_name[name] = Character(
-                id=existing.id,
-                name=name,
-                identity=upd.identity,
-                gender=upd.gender,
-                age=upd.age,
-                personality=list(upd.personality),
-            )
-            evolved_count += 1
-        else:
-            by_name[name] = Character(
-                id=next_id,
-                name=name,
-                identity=upd.identity,
-                gender=upd.gender,
-                age=upd.age,
-                personality=list(upd.personality),
-            )
-            next_id += 1
-            new_count += 1
+        by_name[name] = Character(
+            id=next_id,
+            name=name,
+            identity=cand.identity,
+            gender=cand.gender,
+            age=cand.age,
+            personality=list(cand.personality),
+        )
+        next_id += 1
+        new_count += 1
 
-    return list(by_name.values()), new_count, evolved_count
+    return list(by_name.values()), new_count
 
 
 def _is_narrator(speaker: str) -> bool:

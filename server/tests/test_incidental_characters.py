@@ -66,7 +66,6 @@ class _IncidentalLLM(StubLLMClient):
         filtered_new = [n for n in base.new_names if n != "妇人"]
         return ClassifiedCharacters(
             new_names=filtered_new,
-            evolved=base.evolved,
             incidentals=[
                 Character(
                     id=0,  # placeholder — service.py assigns negative id
@@ -207,7 +206,6 @@ def test_collision_with_real_character_drops_incidental(
         def classify_chapter_characters(self, chapter_text, known):
             return ClassifiedCharacters(
                 new_names=["妇人"],  # treat 妇人 as a real new character
-                evolved=[],
                 incidentals=[
                     Character(  # ALSO emit 妇人 as incidental — collision
                         id=0, name="妇人", identity="路边妇人",

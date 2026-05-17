@@ -1,23 +1,39 @@
 // Main reading/playback screen.
 //
-// Scrolling model (revised 2026-05-07):
+// Rendering model (revised 2026-05-16):
 //
-// - The chapter text is rendered vertically inside a ScrollView, one row
-//   per source line. We dropped the prior horizontal page-swipe TabView
-//   because pagination kept silently truncating the last line of every
-//   page (a TextKit-vs-SwiftUI line-metrics mismatch we'd patched
-//   multiple times without fully eliminating). Vertical scroll has no
-//   page-break to misalign, so the bug class is gone.
-// - Follow mode auto-scrolls the current playing sentence to the centre
-//   of the viewport on every position update.
-// - A user pan disables follow mode (the explicit "I'm reading ahead"
-//   signal). Re-enable via the "..." menu's 跟随播放 toggle.
-// - There is no horizontal swipe; chapter switching goes through the
-//   bottom-bar 上一章 / 下一章 buttons or the TOC.
+// - The chapter text is rendered by a single TextKit-1 `UITextView`
+//   (see `ChapterTextView`), not a SwiftUI `LazyVStack` of `Text` rows.
+//   The switch was made so follow-mode can centre the *playing
+//   sentence* precisely: `NSLayoutManager` exposes the exact rect of any
+//   character range, which SwiftUI's `Text` does not. It also removes
+//   the old TextKit-vs-SwiftUI line-metric mismatch — layout and
+//   rendering are now a single engine.
+// - Follow mode auto-centres the current playing sentence on every
+//   position update. A user drag exits follow mode (the explicit "I'm
+//   reading ahead" signal); re-enable via the bottom-bar follow button.
+// - Chapter switching goes through the bottom-bar 上一章 / 下一章
+//   buttons or the TOC — there is no horizontal swipe.
 import SwiftUI
 #if canImport(UIKit)
 import UIKit
 #endif
+
+
+/// A scroll request handed to ``ChapterTextView``. `token` is bumped on
+/// every request so the text view re-acts even when the target is
+/// unchanged (e.g. re-engaging follow without the sentence moving).
+private struct ChapterScrollCommand: Equatable {
+    enum Target: Equatable {
+        /// Centre the sentence at this index of the displayed chapter.
+        case sentence(Int)
+        /// Snap to the top of the chapter.
+        case top
+    }
+    var token: Int
+    var target: Target
+    var animated: Bool
+}
 
 
 struct PlayerView: View {
@@ -30,10 +46,12 @@ struct PlayerView: View {
     @State private var showSleepSheet = false
     @State private var transientNotice: String?
     @State private var noticeDismissTask: Task<Void, Never>?
-    /// True while we're auto-scrolling for follow-mode. The drag-detect
-    /// gesture checks this so a programmatic scroll doesn't get
-    /// misinterpreted as the user reading ahead.
-    @State private var suppressFollowExit = false
+    /// Latest scroll request for the chapter text view. Bumped by the
+    /// follow-mode triggers below (position advance, chapter switch,
+    /// post-load retry, follow-button re-engage).
+    @State private var scrollCommand = ChapterScrollCommand(
+        token: 0, target: .top, animated: false,
+    )
 
     var body: some View {
         VStack(spacing: 0) {
@@ -104,223 +122,155 @@ struct PlayerView: View {
         return ch.title
     }
 
-    // MARK: - chapter text (vertical scroll)
+    // MARK: - chapter text
 
-    /// Vertical scroll over the chapter's lines. The line index (1-based,
-    /// matching meta's `start_line`) is the scroll target id, so
-    /// follow-mode can `scrollTo(line)` directly without a separate
-    /// line→view-id table. Touch pad style: a real pan exits follow.
+    /// The chapter reading surface. While the browse chapter's text is
+    /// still loading the area shows a spinner; once text is present the
+    /// `UITextView`-backed ``ChapterTextView`` takes over (a plain
+    /// SwiftUI fallback is used on non-UIKit platforms so the package
+    /// still builds for macOS / tests).
     private var chapterScrollArea: some View {
-        // Re-render this subtree when text/meta lands for any chapter.
-        let _ = playback.state.chapterCacheRevision
         let chapterId = playback.state.browseChapterId
-        let lines = chapterLines(for: chapterId)
-        return ScrollViewReader { proxy in
-            ScrollView {
-                if lines.isEmpty {
-                    VStack(spacing: 8) {
-                        ProgressView()
-                        Text("加载章节…").font(.caption).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 200)
-                } else {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(0..<lines.count, id: \.self) { i in
-                            lineView(at: i, line: lines[i], chapterId: chapterId)
-                                .id(i + 1)  // 1-based to match meta.start_line
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+        let text = playback.state.browseChapterText
+        let sentences = playback.state.browseChapterSentences
+        return Group {
+            if text.isEmpty {
+                VStack(spacing: 8) {
+                    ProgressView()
+                    Text("加载章节…").font(.caption).foregroundStyle(.secondary)
                 }
-            }
-            .onChange(of: playback.state.position) { _, pos in
-                autoScrollToCurrentSentence(pos, proxy: proxy)
-            }
-            .onChange(of: playback.state.browseChapterId) { _, _ in
-                // When the chapter target changes (TOC pick, follow
-                // crossing, prev/next button), reset the scroll. If
-                // follow is on and we have a play position in this
-                // chapter, centre on it; otherwise snap to top.
-                resetScroll(proxy: proxy)
-            }
-            .onChange(of: playback.state.chapterCacheRevision) { _, _ in
-                // Text or meta just landed — if follow is on, retry the
-                // scroll-to so the current sentence ends up centred even
-                // when the position update fired before the rows
-                // existed.
-                autoScrollToCurrentSentence(playback.state.position, proxy: proxy)
-            }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 8)
-                    .onChanged { _ in
-                        guard !suppressFollowExit else { return }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                #if canImport(UIKit)
+                ChapterTextView(
+                    chapterId: chapterId ?? -1,
+                    text: text,
+                    fontSize: CGFloat(settings.fontSize),
+                    sentences: sentences,
+                    highlightIndex: highlightSentenceIndex,
+                    scrollCommand: scrollCommand,
+                    onSentenceDoubleTap: { sentenceIndex in
+                        handleDoubleTap(sentenceIndex: sentenceIndex, chapterId: chapterId)
+                    },
+                    onUserScroll: {
                         if playback.state.followMode {
                             playback.state.followMode = false
                         }
-                    }
+                    },
+                )
+                #else
+                ScrollView {
+                    Text(text)
+                        .font(.system(size: CGFloat(settings.fontSize)))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                }
+                #endif
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: playback.state.position) { _, _ in
+            // Playback advanced — centre the new sentence if following.
+            requestFollowScroll(animated: true)
+        }
+        .onChange(of: playback.state.browseChapterId) { _, _ in
+            handleChapterChange()
+        }
+        .onChange(of: playback.state.browseChapterText) { _, _ in
+            // Text landed (often after a chapter switch) — re-issue the
+            // position so a resumed sentence ends up centred.
+            handleChapterContentLanded()
+        }
+        .onChange(of: playback.state.browseChapterSentences.count) { _, _ in
+            // Sentence metadata landed after the text — same retry.
+            handleChapterContentLanded()
+        }
+    }
+
+    /// Index of the currently-playing sentence within the *displayed*
+    /// chapter, or nil when playback is in a different chapter / has no
+    /// position / the meta hasn't loaded. Drives the highlight only —
+    /// the highlight tracks playback even when follow mode is off.
+    private var highlightSentenceIndex: Int? {
+        guard let pos = playback.state.position,
+              pos.chapterId == playback.state.browseChapterId else { return nil }
+        let count = playback.state.browseChapterSentences.count
+        guard pos.sentenceIndex >= 0, pos.sentenceIndex < count else { return nil }
+        return pos.sentenceIndex
+    }
+
+    /// Request a follow-mode centre on the playing sentence. No-op
+    /// unless follow is on and the play position is a valid sentence in
+    /// the displayed chapter.
+    private func requestFollowScroll(animated: Bool) {
+        guard playback.state.followMode,
+              let pos = playback.state.position,
+              pos.chapterId == playback.state.browseChapterId,
+              pos.sentenceIndex >= 0,
+              pos.sentenceIndex < playback.state.browseChapterSentences.count else {
+            return
+        }
+        scrollCommand = ChapterScrollCommand(
+            token: scrollCommand.token + 1,
+            target: .sentence(pos.sentenceIndex),
+            animated: animated,
+        )
+    }
+
+    /// Reposition on a chapter switch: centre on the play position when
+    /// follow is on and the position is in the new chapter, otherwise
+    /// snap to the top (manual TOC / prev-next navigation).
+    private func handleChapterChange() {
+        if playback.state.followMode,
+           let pos = playback.state.position,
+           pos.chapterId == playback.state.browseChapterId,
+           pos.sentenceIndex >= 0,
+           pos.sentenceIndex < playback.state.browseChapterSentences.count {
+            scrollCommand = ChapterScrollCommand(
+                token: scrollCommand.token + 1,
+                target: .sentence(pos.sentenceIndex),
+                animated: false,
+            )
+        } else {
+            scrollCommand = ChapterScrollCommand(
+                token: scrollCommand.token + 1, target: .top, animated: false,
             )
         }
     }
 
-    @ViewBuilder
-    private func lineView(at lineIdx: Int, line: String, chapterId: Int?) -> some View {
-        let attributed = attributedLine(at: lineIdx, line: line, chapterId: chapterId)
-        Text(attributed)
-            .font(.system(size: CGFloat(settings.fontSize)))
-            .lineSpacing(4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
-                handleDoubleTap(lineIdx: lineIdx, chapterId: chapterId)
-            }
-    }
-
-    /// Build the attributed string for one line, applying the current
-    /// playing-sentence highlight if its (start_line, end_line) range
-    /// covers this line. Foreground-only colour change — no font-weight
-    /// or background fill, to avoid glyph-metric reflow at slice edges.
-    ///
-    /// Two-tier palette (per design discussion 2026-05-09):
-    /// - Body text uses ``Color.readerText``, a deliberately
-    ///   reduced-contrast warm gray. The eye doesn't have to fight
-    ///   "screaming pure black" while skimming the surrounding sea of
-    ///   prose.
-    /// - The currently-playing sentence uses ``Color.readerHighlight``,
-    ///   the page's highest-contrast ink (near-black in light mode,
-    ///   pure white in dark). Visual hierarchy is inverted from
-    ///   default-iOS so the user's eye lands on what's *playing*, not
-    ///   on the wall of text around it.
-    private func attributedLine(
-        at lineIdx: Int, line: String, chapterId: Int?,
-    ) -> AttributedString {
-        var plain = AttributedString(line)
-        plain.foregroundColor = Color.readerText
-        guard let pos = playback.state.position,
-              pos.chapterId == chapterId else { return plain }
-        let sentences = playback.chapterSentences(for: pos.chapterId)
-        guard pos.sentenceIndex >= 0, pos.sentenceIndex < sentences.count else {
-            return plain
+    /// Re-centre once chapter text / meta arrive after the position is
+    /// already known (e.g. resuming a book: the position is restored
+    /// before the text finishes loading off disk).
+    private func handleChapterContentLanded() {
+        guard playback.state.followMode,
+              let pos = playback.state.position,
+              pos.chapterId == playback.state.browseChapterId,
+              pos.sentenceIndex >= 0,
+              pos.sentenceIndex < playback.state.browseChapterSentences.count else {
+            return
         }
-        let s = sentences[pos.sentenceIndex]
-        let line1 = lineIdx + 1
-        guard line1 >= s.startLine, line1 <= s.endLine else { return plain }
-
-        let lineU16 = line.utf16
-        let totalU16 = lineU16.count
-        let startCol = (line1 == s.startLine) ? s.startCol : 0
-        let endCol = (line1 == s.endLine) ? s.endCol : totalU16
-        let lo = max(0, min(totalU16, startCol))
-        let hi = max(lo, min(totalU16, endCol))
-        guard lo < hi else { return plain }
-        guard let startU = lineU16.index(
-                lineU16.startIndex, offsetBy: lo, limitedBy: lineU16.endIndex,
-              ),
-              let endU = lineU16.index(
-                lineU16.startIndex, offsetBy: hi, limitedBy: lineU16.endIndex,
-              ),
-              let strStart = String.Index(startU, within: line),
-              let strEnd = String.Index(endU, within: line) else {
-            return plain
-        }
-        let before = String(line[line.startIndex..<strStart])
-        let middle = String(line[strStart..<strEnd])
-        let after = String(line[strEnd..<line.endIndex])
-        var result = AttributedString(before)
-        result.foregroundColor = Color.readerText
-        var hl = AttributedString(middle)
-        hl.foregroundColor = Color.readerHighlight
-        result += hl
-        var afterStr = AttributedString(after)
-        afterStr.foregroundColor = Color.readerText
-        result += afterStr
-        return result
+        scrollCommand = ChapterScrollCommand(
+            token: scrollCommand.token + 1,
+            target: .sentence(pos.sentenceIndex),
+            animated: false,
+        )
     }
 
-    /// Split chapter text at LF boundaries while preserving empty lines —
-    /// blank rows render as zero-height Text and act as paragraph
-    /// separators. `components(separatedBy:)` keeps trailing empties,
-    /// which `split` would drop with `omittingEmptySubsequences: true`.
-    private func chapterLines(for chapterId: Int?) -> [String] {
-        guard let cid = chapterId,
-              let text = playback.chapterText(for: cid) else { return [] }
-        return text.components(separatedBy: "\n")
-    }
-
-    /// Double-tap on a line: jump play to the first sentence whose
-    /// `(start_line ... end_line)` range covers this line. Coarser than
-    /// the prior point-precise hit-test, but multi-sentence lines are
-    /// rare and sentence segmentation respects paragraph breaks so this
-    /// is usually unambiguous. Worth losing the precision for the
-    /// simplicity win in vertical-scroll layout.
-    private func handleDoubleTap(lineIdx: Int, chapterId: Int?) {
+    /// Double-tap → jump playback to the double-tapped sentence.
+    /// `sentenceIndex` is resolved precisely by character range inside
+    /// ``ChapterTextView`` — so the second sentence of a paragraph maps
+    /// to itself, not to the paragraph's first sentence. A negative
+    /// index means the tap fell outside any sentence (header /
+    /// inter-sentence gap), which is intentionally silent.
+    private func handleDoubleTap(sentenceIndex: Int, chapterId: Int?) {
         guard let cid = chapterId else { return }
-        let sentences = playback.chapterSentences(for: cid)
-        if sentences.isEmpty {
+        if playback.chapterSentences(for: cid).isEmpty {
             showNotice("章节分析中，稍后再试")
             return
         }
-        let line1 = lineIdx + 1
-        for (i, s) in sentences.enumerated() where s.startLine <= line1 && line1 <= s.endLine {
-            Task { await playback.jumpPlay(chapterId: cid, sentenceIndex: i) }
-            return
-        }
-        // Tapped on text with no covering sentence (header, blank gap):
-        // intentionally silent per spec.
-    }
-
-    /// Follow-mode auto-scroll: bring the current playing sentence's
-    /// start line to the viewport centre. No-op when follow is off, the
-    /// position is in a different chapter, or we have no position yet.
-    private func autoScrollToCurrentSentence(
-        _ pos: PlaybackPosition?, proxy: ScrollViewProxy,
-    ) {
-        guard playback.state.followMode,
-              let pos = pos,
-              pos.chapterId == playback.state.browseChapterId else { return }
-        let sentences = playback.chapterSentences(for: pos.chapterId)
-        guard pos.sentenceIndex >= 0, pos.sentenceIndex < sentences.count else {
-            return
-        }
-        let line = sentences[pos.sentenceIndex].startLine
-        suppressFollowExit = true
-        // `.smooth` is a critically-damped spring (no overshoot) with a
-        // gentle ease-in / ease-out feel — much less abrupt than the
-        // earlier 0.25 s linear-ish easeInOut, which the user described
-        // as too jumpy. 0.7 s is comfortable for prose: long enough to
-        // read as motion (not a teleport), short enough to settle
-        // before the next sentence boundary in normal-speed playback.
-        withAnimation(.smooth(duration: 0.7)) {
-            proxy.scrollTo(line, anchor: .center)
-        }
-        Task { @MainActor in
-            // Match the suppression window to the animation length so
-            // the drag-detect gesture doesn't re-arm while the spring
-            // is still settling and mistake the tail of our own scroll
-            // for a user pan.
-            try? await Task.sleep(nanoseconds: 750_000_000)
-            suppressFollowExit = false
-        }
-    }
-
-    /// Reset scroll on chapter switch. Prefers follow-centred when both
-    /// follow is on and the play position is in the new chapter; falls
-    /// back to top-of-chapter for manual navigation.
-    private func resetScroll(proxy: ScrollViewProxy) {
-        if playback.state.followMode,
-           let pos = playback.state.position,
-           pos.chapterId == playback.state.browseChapterId {
-            autoScrollToCurrentSentence(pos, proxy: proxy)
-            return
-        }
-        suppressFollowExit = true
-        withAnimation(.smooth(duration: 0.5)) {
-            proxy.scrollTo(1, anchor: .top)
-        }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 550_000_000)
-            suppressFollowExit = false
-        }
+        guard sentenceIndex >= 0 else { return }
+        Task { await playback.jumpPlay(chapterId: cid, sentenceIndex: sentenceIndex) }
     }
 
     // MARK: - controls bar
@@ -567,12 +517,13 @@ struct PlayerView: View {
         playback.state.followMode = true
         if let p = playback.state.position,
            p.chapterId != playback.state.browseChapterId {
+            // Cross-chapter: switching the browse chapter triggers
+            // handleChapterChange, which centres on the play position.
             Task { await playback.setBrowseChapter(chapterId: p.chapterId) }
+        } else {
+            // Same chapter: snap to the playing sentence immediately.
+            requestFollowScroll(animated: true)
         }
-        // Same chapter: the .onChange(position) handler will fire the
-        // auto-scroll on the next position update; for the case where
-        // position hasn't moved yet, the chapterCacheRevision change
-        // listener also re-runs autoScroll. Sufficient.
     }
 
     private var sleepTimerActive: Bool {
@@ -587,6 +538,361 @@ struct PlayerView: View {
         return String(format: "%02d:%02d", m, s)
     }
 }
+
+
+#if canImport(UIKit)
+
+/// `UITextView` subclass that reports layout passes. A scroll requested
+/// before the view had a non-zero size (first appearance) is parked and
+/// flushed here once the size is real.
+private final class ChapterUITextView: UITextView {
+    var onLayout: (() -> Void)?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
+    }
+}
+
+
+/// The chapter reading surface, backed by a TextKit-1 `UITextView`.
+///
+/// Why a `UITextView` and not a SwiftUI `LazyVStack` of `Text` rows (the
+/// previous design): playback advances sentence-by-sentence, and one
+/// source paragraph holds several sentences. SwiftUI's `Text` exposes no
+/// sub-paragraph geometry, so follow-mode could only centre the whole
+/// paragraph. A `UITextView`'s `NSLayoutManager` yields the exact rect of
+/// any character range, so we centre the *sentence* precisely.
+///
+/// Every behaviour of the old surface is preserved:
+/// - the body / playing-sentence two-tier palette (foreground-colour
+///   only — no metric-shifting weight or fill);
+/// - double-tap a line to jump playback there;
+/// - a user drag exits follow mode;
+/// - follow-mode auto-centre, chapter-switch repositioning, and the
+///   post-load retry when text / meta arrive after the position.
+private struct ChapterTextView: UIViewRepresentable {
+    let chapterId: Int
+    let text: String
+    let fontSize: CGFloat
+    let sentences: [Sentence]
+    let highlightIndex: Int?
+    let scrollCommand: ChapterScrollCommand
+    /// Called with the index of the double-tapped sentence, or -1 when
+    /// the tap fell outside every sentence.
+    let onSentenceDoubleTap: (Int) -> Void
+    let onUserScroll: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> ChapterUITextView {
+        // Explicit TextKit-1 stack: accessing `.layoutManager` on a
+        // default (TextKit-2) UITextView would force a downgrade anyway,
+        // and we need `NSLayoutManager.boundingRect(forGlyphRange:)` for
+        // precise sentence centring.
+        let storage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        layoutManager.allowsNonContiguousLayout = false
+        storage.addLayoutManager(layoutManager)
+        let container = NSTextContainer(
+            size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude),
+        )
+        container.widthTracksTextView = true
+        container.lineFragmentPadding = 0
+        layoutManager.addTextContainer(container)
+
+        let tv = ChapterUITextView(frame: .zero, textContainer: container)
+        tv.isEditable = false
+        // Not selectable: matches the old SwiftUI `Text` (no selection)
+        // and frees the tap gestures for our double-tap-to-jump.
+        tv.isSelectable = false
+        tv.isScrollEnabled = true
+        tv.alwaysBounceVertical = true
+        tv.backgroundColor = UIColor.readerBackground
+        // Replaces the old `.padding(.horizontal, 16).padding(.vertical, 8)`.
+        tv.textContainerInset = UIEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
+        // Deterministic offset maths — no auto safe-area insets.
+        tv.contentInsetAdjustmentBehavior = UIScrollView.ContentInsetAdjustmentBehavior.never
+        tv.delegate = context.coordinator
+
+        let doubleTap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleDoubleTap(_:)),
+        )
+        doubleTap.numberOfTapsRequired = 2
+        tv.addGestureRecognizer(doubleTap)
+
+        context.coordinator.textView = tv
+        tv.onLayout = { [weak coordinator = context.coordinator] in
+            coordinator?.flushPendingScrollIfPossible()
+        }
+        return tv
+    }
+
+    func updateUIView(_ uiView: ChapterUITextView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.sync()
+    }
+
+    // MARK: - Coordinator
+
+    @MainActor
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: ChapterTextView
+        weak var textView: ChapterUITextView?
+
+        private var renderedText: String?
+        private var renderedFontSize: CGFloat = 0
+        private var renderedChapterId: Int?
+        private var appliedHighlight: NSRange?
+        private var lastScrollToken: Int = .min
+        /// UTF-16 offset of each source line's first character.
+        private var lineStarts: [Int] = []
+        /// A scroll that arrived before the view had a usable size.
+        private var pendingScroll: PendingScroll?
+
+        private enum PendingScroll {
+            case range(NSRange, animated: Bool)
+            case top(animated: Bool)
+        }
+
+        init(_ parent: ChapterTextView) {
+            self.parent = parent
+        }
+
+        /// Reconcile the text view with the latest `parent` values.
+        func sync() {
+            guard let tv = textView else { return }
+            let chapterChanged = renderedChapterId != parent.chapterId
+            let textChanged = renderedText != parent.text
+                || renderedFontSize != parent.fontSize
+
+            if textChanged {
+                tv.textStorage.setAttributedString(
+                    Self.makeAttributedText(parent.text, fontSize: parent.fontSize),
+                )
+                renderedText = parent.text
+                renderedFontSize = parent.fontSize
+                renderedChapterId = parent.chapterId
+                appliedHighlight = nil
+                lineStarts = Self.buildLineStarts(parent.text)
+                applyHighlight()
+                // A font-size change reflows the same chapter — keep the
+                // playing sentence in view across it. A chapter change
+                // gets an explicit scroll command instead (below).
+                if !chapterChanged, let range = highlightRange() {
+                    scroll(.range(range, animated: false))
+                }
+            } else {
+                applyHighlight()
+            }
+
+            if lastScrollToken != parent.scrollCommand.token {
+                lastScrollToken = parent.scrollCommand.token
+                performScroll(parent.scrollCommand)
+            }
+        }
+
+        // MARK: text
+
+        private static func makeAttributedText(
+            _ text: String, fontSize: CGFloat,
+        ) -> NSAttributedString {
+            let paragraph = NSMutableParagraphStyle()
+            // Matches the old SwiftUI `.lineSpacing(4)`.
+            paragraph.lineSpacing = 4
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: fontSize),
+                .paragraphStyle: paragraph,
+                .foregroundColor: UIColor.readerText,
+            ]
+            return NSAttributedString(string: text, attributes: attributes)
+        }
+
+        private static func buildLineStarts(_ text: String) -> [Int] {
+            var starts = [0]
+            var offset = 0
+            for unit in text.utf16 {
+                if unit == 0x000A { starts.append(offset + 1) }
+                offset += 1
+            }
+            return starts
+        }
+
+        // MARK: highlight
+
+        /// Re-colour the playing sentence. Foreground-colour only, so no
+        /// glyph metrics shift — the two-tier palette as before.
+        private func applyHighlight() {
+            guard let tv = textView else { return }
+            let newRange = highlightRange()
+            if newRange == appliedHighlight { return }
+            let storage = tv.textStorage
+            let length = storage.length
+            storage.beginEditing()
+            if let old = appliedHighlight, NSMaxRange(old) <= length {
+                storage.addAttribute(
+                    .foregroundColor, value: UIColor.readerText, range: old,
+                )
+            }
+            if let new = newRange, NSMaxRange(new) <= length {
+                storage.addAttribute(
+                    .foregroundColor, value: UIColor.readerHighlight, range: new,
+                )
+            }
+            storage.endEditing()
+            appliedHighlight = newRange
+        }
+
+        private func highlightRange() -> NSRange? {
+            guard let idx = parent.highlightIndex,
+                  idx >= 0, idx < parent.sentences.count else { return nil }
+            return sentenceRange(parent.sentences[idx])
+        }
+
+        /// Char range of a sentence in the chapter text, clamped to the
+        /// stored text. `start_col` / `end_col` are UTF-16 offsets, which
+        /// is exactly what `NSRange` indexes.
+        private func sentenceRange(_ s: Sentence) -> NSRange? {
+            guard let tv = textView else { return nil }
+            let length = tv.textStorage.length
+            let lo = charOffset(line: s.startLine, col: s.startCol)
+            let hi = charOffset(line: s.endLine, col: s.endCol)
+            let start = max(0, min(lo, length))
+            let end = max(start, min(hi, length))
+            return NSRange(location: start, length: end - start)
+        }
+
+        private func charOffset(line: Int, col: Int) -> Int {
+            guard line >= 1, !lineStarts.isEmpty else { return 0 }
+            let idx = min(line - 1, lineStarts.count - 1)
+            return lineStarts[idx] + max(0, col)
+        }
+
+        /// Index of the sentence whose character range covers `offset`,
+        /// or -1 when the tap fell outside every sentence (a header or
+        /// inter-sentence gap). Resolution is by character range, not by
+        /// source line — several sentences share one paragraph line, so
+        /// a line-level match would always collapse to the paragraph's
+        /// first sentence.
+        private func sentenceIndex(coveringCharOffset offset: Int) -> Int {
+            for (i, s) in parent.sentences.enumerated() {
+                guard let range = sentenceRange(s) else { continue }
+                if range.location <= offset, offset < NSMaxRange(range) {
+                    return i
+                }
+            }
+            return -1
+        }
+
+        // MARK: scrolling
+
+        private func performScroll(_ command: ChapterScrollCommand) {
+            switch command.target {
+            case .top:
+                scroll(.top(animated: command.animated))
+            case .sentence(let idx):
+                guard idx >= 0, idx < parent.sentences.count,
+                      let range = sentenceRange(parent.sentences[idx]) else { return }
+                scroll(.range(range, animated: command.animated))
+            }
+        }
+
+        private func scroll(_ target: PendingScroll) {
+            guard let tv = textView else { return }
+            if tv.bounds.height > 0 {
+                execute(target, in: tv)
+            } else {
+                // No real size yet (first appearance) — park it.
+                pendingScroll = target
+            }
+        }
+
+        func flushPendingScrollIfPossible() {
+            guard let tv = textView, let pending = pendingScroll,
+                  tv.bounds.height > 0 else { return }
+            pendingScroll = nil
+            execute(pending, in: tv)
+        }
+
+        private func execute(_ target: PendingScroll, in tv: ChapterUITextView) {
+            let y: CGFloat
+            let animated: Bool
+            switch target {
+            case .top(let a):
+                y = 0
+                animated = a
+            case .range(let range, let a):
+                guard let centred = centeredOffsetY(for: range, in: tv) else { return }
+                y = centred
+                animated = a
+            }
+            if animated {
+                // 0.7 s gentle ease — matches the prose-reading pace the
+                // old SwiftUI `.smooth` scroll was tuned to. `.allowUser-
+                // Interaction` keeps a finger-drag able to interrupt it
+                // (and so exit follow mode via `scrollViewWillBeginDragging`).
+                UIView.animate(
+                    withDuration: 0.7, delay: 0,
+                    options: [.curveEaseInOut, .beginFromCurrentState, .allowUserInteraction],
+                ) {
+                    tv.contentOffset = CGPoint(x: 0, y: y)
+                }
+            } else {
+                tv.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+            }
+        }
+
+        /// Content-offset Y that places `range`'s vertical centre at the
+        /// viewport centre, clamped to the scrollable range.
+        private func centeredOffsetY(
+            for range: NSRange, in tv: ChapterUITextView,
+        ) -> CGFloat? {
+            guard range.length > 0, range.location != NSNotFound else { return nil }
+            let layoutManager = tv.layoutManager
+            let container = tv.textContainer
+            layoutManager.ensureLayout(for: container)
+            let glyphRange = layoutManager.glyphRange(
+                forCharacterRange: range, actualCharacterRange: nil,
+            )
+            var rect = layoutManager.boundingRect(
+                forGlyphRange: glyphRange, in: container,
+            )
+            rect.origin.y += tv.textContainerInset.top
+            let contentHeight = layoutManager.usedRect(for: container).height
+                + tv.textContainerInset.top + tv.textContainerInset.bottom
+            let maxY = max(0, contentHeight - tv.bounds.height)
+            let target = rect.midY - tv.bounds.height / 2
+            return min(max(0, target), maxY)
+        }
+
+        // MARK: gestures / delegate
+
+        @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+            guard let tv = textView, gesture.state == .ended else { return }
+            let point = gesture.location(in: tv)
+            let adjusted = CGPoint(
+                x: point.x - tv.textContainerInset.left,
+                y: point.y - tv.textContainerInset.top,
+            )
+            var fraction: CGFloat = 0
+            let charIndex = tv.layoutManager.characterIndex(
+                for: adjusted, in: tv.textContainer,
+                fractionOfDistanceBetweenInsertionPoints: &fraction,
+            )
+            parent.onSentenceDoubleTap(sentenceIndex(coveringCharOffset: charIndex))
+        }
+
+        /// Fires only for a genuine finger drag — programmatic
+        /// `setContentOffset` / `UIView.animate` scrolls do not trigger
+        /// it — so it cleanly means "user is reading ahead".
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            parent.onUserScroll()
+        }
+    }
+}
+
+#endif
 
 
 /// Slim progress strip drawn between the chapter text and the controls
@@ -688,6 +994,37 @@ private struct SleepTimerSheet: View {
 }
 
 
+#if canImport(UIKit)
+/// Reader-surface palette as `UIColor` (dynamic light/dark) — needed for
+/// the `UITextView` attributed text. ``Color`` mirrors these below.
+extension UIColor {
+    static var readerBackground: UIColor {
+        UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor.systemBackground
+                : UIColor(red: 0.969, green: 0.937, blue: 0.851, alpha: 1.0)  // ~#F7EFD9
+        }
+    }
+
+    static var readerText: UIColor {
+        UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.659, green: 0.635, blue: 0.604, alpha: 1.0)  // ~#A8A29A
+                : UIColor(red: 0.420, green: 0.357, blue: 0.278, alpha: 1.0)  // ~#6B5B47
+        }
+    }
+
+    static var readerHighlight: UIColor {
+        UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor.white
+                : UIColor(red: 0.059, green: 0.039, blue: 0.020, alpha: 1.0)  // ~#0F0A05
+        }
+    }
+}
+#endif
+
+
 /// Reader-surface palette for the player page (background + body +
 /// highlight). The triple is designed together so the visual hierarchy
 /// always points at the currently-playing sentence:
@@ -706,11 +1043,7 @@ private struct SleepTimerSheet: View {
 extension Color {
     static var readerBackground: Color {
         #if canImport(UIKit)
-        return Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor.systemBackground
-                : UIColor(red: 0.969, green: 0.937, blue: 0.851, alpha: 1.0)  // ~#F7EFD9
-        })
+        return Color(uiColor: UIColor.readerBackground)
         #else
         return Color(red: 0.969, green: 0.937, blue: 0.851)
         #endif
@@ -720,11 +1053,7 @@ extension Color {
     /// Dark: warm mid-gray (~10:1 on near-black).
     static var readerText: Color {
         #if canImport(UIKit)
-        return Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.659, green: 0.635, blue: 0.604, alpha: 1.0)  // ~#A8A29A
-                : UIColor(red: 0.420, green: 0.357, blue: 0.278, alpha: 1.0)  // ~#6B5B47
-        })
+        return Color(uiColor: UIColor.readerText)
         #else
         return Color(red: 0.420, green: 0.357, blue: 0.278)
         #endif
@@ -735,11 +1064,7 @@ extension Color {
     /// Always the single highest-contrast element on the page.
     static var readerHighlight: Color {
         #if canImport(UIKit)
-        return Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor.white
-                : UIColor(red: 0.059, green: 0.039, blue: 0.020, alpha: 1.0)  // ~#0F0A05
-        })
+        return Color(uiColor: UIColor.readerHighlight)
         #else
         return Color(red: 0.059, green: 0.039, blue: 0.020)
         #endif

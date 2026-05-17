@@ -177,11 +177,13 @@ class TTSService:
             # Qwen3-TTS occasionally yields zero audio chunks for inputs
             # it can't speak (decoration that survived
             # ``_has_speakable_content``, corner-case token sequences,
-            # numeric tables, etc.). Substitute silence so the player
-            # can advance instead of erroring out the whole sentence.
-            # Cache the silence too — the backend is deterministic, so
-            # the next attempt would just fail again. The user can
-            # invalidate by clearing the cache directory if needed.
+            # numeric tables, etc.). The backend already retries such a
+            # failure several times internally (see ``Qwen3TTSClient``);
+            # reaching here means every attempt still produced no audio.
+            # Substitute silence so the player can advance instead of
+            # erroring out the whole sentence, and cache it so the next
+            # request doesn't re-run the same losing synthesis. The user
+            # can invalidate by clearing the cache directory if needed.
             log.warning(
                 "tts backend returned no audio; substituting silence: "
                 "speaker=%s err=%s text=%r",

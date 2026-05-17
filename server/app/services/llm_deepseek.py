@@ -8,8 +8,11 @@ Thinking is **always off** — experiments showed it bills extra tokens
 without measurably improving accuracy on these tasks.
 
 Chapter analysis is split into two independent calls (segmentation +
-character updates), invoked in parallel by ``BookService``. Each call
-here is still single-shot; concurrency is the caller's responsibility.
+character updates), invoked in parallel by ``BookService``. Most calls
+are single-shot; ``segment_chapter`` is the exception — it splits long
+chapters into line-aligned batches (one HTTP call each) so the NDJSON
+output never truncates against ``max_tokens``. Concurrency across
+chapters is the caller's responsibility.
 """
 from __future__ import annotations
 
@@ -124,16 +127,45 @@ class DeepSeekLLMClient(LLMClient):
         chapter_text: str,
         known_characters: list[Character],
     ) -> list[AnalyzedSentence]:
-        messages = P.build_segment_chapter_messages(chapter_text, known_characters)
+        """Segment a chapter into reading segments.
+
+        The NDJSON output restates the whole chapter, so a long chapter
+        overruns ``_MAX_TOKENS_CHAPTER`` in a single call — the response
+        truncates and the chapter's tail is silently lost. The chapter is
+        therefore split into line-aligned batches whose estimated output
+        fits the token budget; each batch is one LLM call and the parsed
+        results are concatenated in chapter order (which keeps the
+        downstream ``locate_sentences`` forward cursor monotonic).
+
+        The LLM only cuts on speaker changes and sentence-ending
+        punctuation; over-long segments are then split at clause
+        boundaries by ``split_long_segments`` — a deterministic Python
+        pass, since LLMs honour length caps poorly.
+        """
+        batches = P.split_chapter_for_segmentation(chapter_text, _MAX_TOKENS_CHAPTER)
+
         def parse(raw: str) -> list[AnalyzedSentence]:
             return P.parse_segmented_chapter(raw)
-        return self._call_with_parse(
-            messages=messages,
-            parse=parse,
-            default=[],
-            max_tokens=_MAX_TOKENS_CHAPTER,
-            label="segment_chapter",
+
+        raw_sentences: list[AnalyzedSentence] = []
+        for i, batch in enumerate(batches, start=1):
+            messages = P.build_segment_chapter_messages(batch, known_characters)
+            sentences = self._call_with_parse(
+                messages=messages,
+                parse=parse,
+                default=[],
+                max_tokens=_MAX_TOKENS_CHAPTER,
+                label=f"segment_chapter[{i}/{len(batches)}]",
+            )
+            raw_sentences.extend(sentences)
+
+        all_sentences = P.split_long_segments(raw_sentences)
+        log.info(
+            "segment_chapter: %d chars -> %d batch(es) -> %d segments "
+            "(%d after long-sentence split)",
+            len(chapter_text), len(batches), len(raw_sentences), len(all_sentences),
         )
+        return all_sentences
 
     # --- transport ---
 
@@ -170,8 +202,19 @@ class DeepSeekLLMClient(LLMClient):
                 f"DeepSeek HTTP {exc.code}: "
                 f"{body_bytes.decode('utf-8', errors='replace')[:500]}"
             ) from exc
-        msg = payload["choices"][0]["message"]
+        choice = payload["choices"][0]
+        msg = choice["message"]
         usage = payload.get("usage", {})
+        # Safety net: if the backend stopped because it hit max_tokens, the
+        # content is truncated mid-stream. Batching is sized to avoid this,
+        # but a mis-estimate must not fail silently — surface it loudly so
+        # the cause is visible instead of just "fewer sentences than lines".
+        if choice.get("finish_reason") == "length":
+            log.warning(
+                "DeepSeek response hit max_tokens=%d — output TRUNCATED "
+                "(completion_tokens=%s); downstream result is incomplete",
+                max_tokens, usage.get("completion_tokens", "?"),
+            )
         return msg, usage
 
     def _call_with_parse(

@@ -99,7 +99,7 @@ class ClassifiedCharacters(BaseModel):
     of the per-chapter analysis pipeline, see service.py).
 
     Lists every non-narrator character the LLM identified in this
-    chapter, split into three buckets:
+    chapter, split into two buckets:
 
     - ``new_names``: real, named characters not in the known roster
       (proper-noun / unique identifier — 萧炎, 林黛玉, 药老). Only the
@@ -108,8 +108,6 @@ class ClassifiedCharacters(BaseModel):
       introduction context (the reader may have jumped past the
       character's first appearance, so the current chapter alone may
       lack good descriptive material).
-    - ``evolved``: known characters whose profile materially changed
-      in this chapter (full new profile emitted directly).
     - ``incidentals``: descriptor-named one-off speakers in this
       chapter only (妇人, 男子, 仆人, 婢女 — generic role labels, not
       proper nouns). Full profile emitted inline since they're
@@ -120,12 +118,11 @@ class ClassifiedCharacters(BaseModel):
       ``id < 0``, never name parsing — the LLM-given descriptor stays
       on as the user-facing ``name``.
 
-    Known characters with no meaningful change are absent (LLM is
-    instructed not to emit them).
+    Known characters are absent — once profiled, a character's profile
+    is fixed; chapters never revise it.
     """
 
     new_names: list[str] = Field(default_factory=list)
-    evolved: list[Character] = Field(default_factory=list)
     incidentals: list[Character] = Field(default_factory=list)
 
 

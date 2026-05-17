@@ -5,6 +5,8 @@ Run locally:
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
 import signal
@@ -17,6 +19,8 @@ from fastapi import Depends, FastAPI
 from .api import books, chapters, characters, health, tts
 from .api.auth import require_auth
 from .config import get_settings
+from .core.cache_janitor import run_cache_janitor
+from .core.tts_cache import TTSCache
 from .keepalive import prevent_system_sleep
 
 
@@ -124,7 +128,25 @@ async def lifespan(app: FastAPI):
             log.info("warming up TTS backend (%s)", settings.tts.provider)
             get_tts_service()
 
-        yield
+        # Periodic size-cap eviction for the TTS cache — it has no
+        # eviction policy of its own (see app/core/tts_cache.py).
+        janitor_task: asyncio.Task | None = None
+        if settings.tts.cache_sweep_seconds > 0:
+            janitor_task = asyncio.create_task(
+                run_cache_janitor(
+                    TTSCache(settings.tts_cache_dir),
+                    max_bytes=settings.tts.cache_max_mb * 1024 * 1024,
+                    interval_seconds=settings.tts.cache_sweep_seconds,
+                )
+            )
+
+        try:
+            yield
+        finally:
+            if janitor_task is not None:
+                janitor_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await janitor_task
 
 
 def create_app() -> FastAPI:

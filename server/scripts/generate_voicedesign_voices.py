@@ -488,9 +488,9 @@ def synth_one(model: Module, description: str, sample_text: str) -> bytes:
     and re-loaded at TTS runtime by the model's audio loader, which
     expects PCM/WAV. (An earlier version of this script accidentally
     saved AAC bytes under .wav extension after the runtime path was
-    refactored to AAC, breaking every prompt at load time. See the
-    ``_collect_audio_wav`` vs ``_collect_audio`` split in
-    ``app/services/tts_qwen3.py``.)
+    refactored to AAC, breaking every prompt at load time. This is why
+    this script uses ``_collect_audio_wav`` — the WAV form — rather than
+    the AAC-encoding runtime path in ``app/services/tts_qwen3.py``.)
     """
     generator = model.generate_voice_design(
         text=sample_text,

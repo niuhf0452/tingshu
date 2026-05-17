@@ -35,6 +35,12 @@ Implementation notes:
   process-wide ``mlx_gpu.gpu_guard`` so LLM and TTS take turns on Metal.
   Endpoint already uses ``run_in_threadpool`` so this doesn't block the
   asyncio loop.
+
+- **Quality control**: every clip is checked by ``audio_qc`` for the
+  "model failed to terminate → trailing garbage" defect; a defective
+  clip is re-synthesized (sampling is stochastic, so a retry usually
+  recovers), up to ``_MAX_SYNTH_ATTEMPTS`` attempts. See
+  ``synthesize``.
 """
 from __future__ import annotations
 
@@ -48,9 +54,12 @@ import time
 import wave
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 from mlx_audio.tts.generate import generate_audio
 
 from ..core.enums import Tone
+from . import audio_qc
 from .mlx_gpu import gpu_guard
 
 
@@ -77,6 +86,12 @@ OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS native output rate
 # above the perceptual transparency floor for speech (~32 kbps). Going
 # higher (e.g. 64 kbps) gains nothing audible for narrated text.
 OUTPUT_AAC_BITRATE = 48_000
+
+# Quality control: a synthesized clip is checked with ``audio_qc`` and,
+# if defective, re-synthesized. Sampling is stochastic (temperature 0.9)
+# so a retry usually comes out clean. This is the **total** number of
+# attempts, not extra retries.
+_MAX_SYNTH_ATTEMPTS = 3
 
 _SPEAKER_ID_RE = re.compile(r"^(zs|preset):(.+)$")
 
@@ -139,45 +154,83 @@ class Qwen3TTSClient:
         speaker_id: str,
         tone: Tone,
     ) -> bytes:
-        """Always synthesizes at 1.0x. Playback rate is applied client-
-        side via ``AVAudioUnitTimePitch`` so the cache stays speed-free.
+        """Synthesize ``text`` at 1.0x (playback rate is applied client-
+        side via ``AVAudioUnitTimePitch`` so the cache stays speed-free).
+
+        Each clip is quality-checked with ``audio_qc``: Qwen3-TTS
+        occasionally fails to terminate and trails off into a long span
+        of garbage. Because sampling is stochastic (temperature 0.9), a
+        re-synthesis usually comes out clean — so a defective clip is
+        retried, up to ``_MAX_SYNTH_ATTEMPTS`` attempts in total. If
+        every attempt is defective the least-bad one is returned (better
+        than erroring the whole sentence). A zero-audio result still
+        raises ``RuntimeError`` so ``TTSService`` can substitute silence.
         """
         mode, target = parse_speaker_id(speaker_id)
         instruct = tone_instruct(tone) or None
 
-        # ``gpu_guard`` serialises with the LLM so both don't push Metal
-        # commands concurrently.
-        with gpu_guard():
+        def _generate():
             if mode == "zs":
                 ref_audio_path, ref_text = self._load_prompt(target)
-                generator = self._model.generate(
-                    text=text,
-                    ref_audio=ref_audio_path,
-                    ref_text=ref_text,
-                    instruct=instruct,
-                    speed=1.0,
-                    verbose=False,
+                return self._model.generate(
+                    text=text, ref_audio=ref_audio_path, ref_text=ref_text,
+                    instruct=instruct, speed=1.0, verbose=False,
                 )
-            elif mode == "preset":
-                generator = self._model.generate_custom_voice(
-                    text=text,
-                    speaker=target,
-                    instruct=instruct,
-                    verbose=False,
+            if mode == "preset":
+                return self._model.generate_custom_voice(
+                    text=text, speaker=target, instruct=instruct, verbose=False,
                 )
-            else:  # pragma: no cover — parse_speaker_id validates
-                raise ValueError(f"unknown speaker id mode: {mode}")
+            raise ValueError(f"unknown speaker id mode: {mode}")  # pragma: no cover
 
-            try:
-                return _collect_audio(generator)
-            except RuntimeError as exc:
-                # Log the inputs so the next failure is diagnosable.
-                log.warning(
-                    "Qwen3-TTS synthesis failed: %s — text=%r speaker=%s "
-                    "tone=%s instruct=%r",
-                    exc, text[:200], speaker_id, tone.value, instruct,
-                )
-                raise
+        best_samples: np.ndarray | None = None
+        best_span = float("inf")
+
+        for attempt in range(1, _MAX_SYNTH_ATTEMPTS + 1):
+            # ``gpu_guard`` serialises with the LLM on Metal — held only
+            # for one generation, released between attempts.
+            with gpu_guard():
+                try:
+                    samples = _collect_samples(_generate())
+                except RuntimeError:
+                    samples = None  # zero / no audio — a retry may recover
+
+            span = (
+                audio_qc.longest_bad_span(samples, OUTPUT_SAMPLE_RATE)
+                if samples is not None else float("inf")
+            )
+            if span < best_span:
+                best_span, best_samples = span, samples
+
+            if samples is not None and span <= audio_qc.BAD_SPAN_MAX_S:
+                if attempt > 1:
+                    log.info(
+                        "Qwen3-TTS clean on attempt %d/%d (bad_span=%.1fs)",
+                        attempt, _MAX_SYNTH_ATTEMPTS, span,
+                    )
+                break
+
+            log.warning(
+                "Qwen3-TTS attempt %d/%d defective (%s) — %s; "
+                "speaker=%s tone=%s text=%r",
+                attempt, _MAX_SYNTH_ATTEMPTS,
+                "no audio" if samples is None else f"bad_span={span:.1f}s",
+                "retrying" if attempt < _MAX_SYNTH_ATTEMPTS else "giving up",
+                speaker_id, tone.value, text[:120],
+            )
+
+        if best_samples is None:
+            # Every attempt produced no audio — raise so TTSService
+            # substitutes silence (the pre-existing zero-audio contract).
+            raise RuntimeError(
+                f"Qwen3-TTS produced no audio in {_MAX_SYNTH_ATTEMPTS} attempts"
+            )
+        if best_span > audio_qc.BAD_SPAN_MAX_S:
+            log.warning(
+                "Qwen3-TTS: all %d attempts defective; using least-bad "
+                "(bad_span=%.1fs) speaker=%s text=%r",
+                _MAX_SYNTH_ATTEMPTS, best_span, speaker_id, text[:120],
+            )
+        return _encode_aac(_samples_to_wav(best_samples))
 
     def _load_prompt(self, prompt_id: str) -> tuple[str, str]:
         cached = self._prompt_cache.get(prompt_id)
@@ -200,17 +253,13 @@ class Qwen3TTSClient:
         return result
 
 
-def _collect_audio_wav(generator) -> bytes:
-    """Collect MLX-audio's GenerationResult chunks → 16-bit mono WAV bytes.
+def _collect_samples(generator) -> np.ndarray:
+    """Collect MLX-audio's GenerationResult chunks → one concatenated
+    float32 mono sample array.
 
-    Used by tooling that needs to **store** the audio for later
-    re-loading (e.g. ``scripts/generate_voicedesign_voices.py`` writes
-    voice-clone reference audio that the runtime reads back). WAV is
-    losslessly decodable by every audio loader; AAC isn't (some loaders
-    silently fail).
+    Raises ``RuntimeError`` if the generator yielded no audio (zero
+    frames) — the caller decides whether to retry or substitute silence.
     """
-    import numpy as np
-
     segments: list[Any] = []
     chunk_count = 0
     empty_audio_chunks = 0
@@ -231,9 +280,12 @@ def _collect_audio_wav(generator) -> bytes:
             f"Qwen3-TTS produced no audio output "
             f"(chunks={chunk_count} empty={empty_audio_chunks})"
         )
+    return np.concatenate(segments)
 
-    audio = np.concatenate(segments)
-    audio_int16 = (audio * 32767).clip(-32768, 32767).astype(np.int16)
+
+def _samples_to_wav(samples: np.ndarray) -> bytes:
+    """Float32 mono samples → 16-bit mono WAV bytes @ 24 kHz."""
+    audio_int16 = (samples * 32767).clip(-32768, 32767).astype(np.int16)
     wav_buf = io.BytesIO()
     with wave.open(wav_buf, "wb") as w:
         w.setnchannels(1)
@@ -243,15 +295,16 @@ def _collect_audio_wav(generator) -> bytes:
     return wav_buf.getvalue()
 
 
-def _collect_audio(generator) -> bytes:
-    """Collect MLX-audio's GenerationResult chunks → M4A (AAC) bytes.
+def _collect_audio_wav(generator) -> bytes:
+    """Collect MLX-audio's GenerationResult chunks → 16-bit mono WAV bytes.
 
-    Used by the runtime synthesis path: WAV is collected first, then
-    AAC-encoded via ``afconvert`` (macOS native — no extra dependency,
-    ~30ms overhead per sentence). Returns M4A bytes ready to send as
-    the HTTP response body or store in the disk cache.
+    Used by tooling that needs to **store** the audio for later
+    re-loading (e.g. ``scripts/generate_voicedesign_voices.py`` writes
+    voice-clone reference audio that the runtime reads back). WAV is
+    losslessly decodable by every audio loader; AAC isn't (some loaders
+    silently fail).
     """
-    return _encode_aac(_collect_audio_wav(generator))
+    return _samples_to_wav(_collect_samples(generator))
 
 
 def _encode_aac(wav_bytes: bytes) -> bytes:

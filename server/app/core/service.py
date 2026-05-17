@@ -4,9 +4,10 @@ The chapter-meta flow (see docs/technical-plan.md §2.3):
 
 Phase A — character profile analysis (must complete first):
   A1. ``classify_chapter_characters`` (LLM) lists every non-narrator
-      character this chapter touches and tags each as new / evolved.
-      Evolved characters carry a full new profile inline; new
-      characters carry only their name.
+      character this chapter touches, classified as new or incidental.
+      New characters carry only their name; incidentals carry a full
+      profile inline. Already-known characters are not re-emitted — a
+      profile is fixed once established.
   A2. For each new name, **code** scans every chapter of the book in
       order to find the first 3 line-occurrences of the name and
       gathers ±3 lines of context around each. This guards against
@@ -15,7 +16,7 @@ Phase A — character profile analysis (must complete first):
       the original introduction text feeding profile generation.
   A3. ``profile_new_characters`` (LLM) generates full profiles for the
       new characters using the gathered context windows.
-  A4. Merge evolved + new profiles into the cumulative roster
+  A4. Merge the new-character profiles into the cumulative roster
       (``characters.json``). Save.
 
 Phase B — reading-segment analysis:
@@ -54,7 +55,7 @@ from .models import (
 )
 from .narrator import NARRATOR_ID_MAX
 from .nlp.chapters import detect_and_split_chapters
-from .nlp.reconcile import merge_character_updates, reconcile_chapter_speakers
+from .nlp.reconcile import merge_new_characters, reconcile_chapter_speakers
 from .nlp.sentences import locate_sentences
 from .parsers.epub import EpubParseError, parse_epub
 from .parsers.txt import ParsedBook, parse_txt
@@ -231,15 +232,15 @@ class BookService:
         new_profiles = self.llm.profile_new_characters(name_to_contexts, known)
         a3_elapsed = time.monotonic() - t_a3
 
-        # A4: merge evolved + new into the roster, save. Incidentals are
-        # **not** merged — they're chapter-local one-offs.
+        # A4: merge the new-character profiles into the roster, save.
+        # Incidentals are **not** merged — they're chapter-local one-offs.
         with book_lock:
             # Reload in case another concurrent chapter job updated the
             # global table while our LLM calls were in flight.
             known = self.repo.load_characters(book_id)
-            updated_known, new_count, evolved_count = merge_character_updates(
+            updated_known, new_count = merge_new_characters(
                 known=known,
-                updates=list(classified.evolved) + list(new_profiles),
+                new_characters=new_profiles,
             )
             self.repo.save_characters(book_id, updated_known)
 
@@ -293,10 +294,10 @@ class BookService:
         incidental_count = sum(1 for c in chapter_chars if c.id < 0)
         log.info(
             "analyze_chapter done: book=%s ch=%d sentences=%d "
-            "chapter_chars=%d new=%d evolved=%d incidental=%d "
+            "chapter_chars=%d new=%d incidental=%d "
             "wall_a1=%.1fs wall_a3=%.1fs wall_b1=%.1fs total=%.1fs",
             book_id, chapter_id, len(sentences), len(chapter_chars),
-            new_count, evolved_count, incidental_count,
+            new_count, incidental_count,
             a1_elapsed, a3_elapsed, b1_elapsed, time.monotonic() - t0,
         )
         return chapter_meta

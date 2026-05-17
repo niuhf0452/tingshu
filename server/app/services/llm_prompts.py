@@ -10,7 +10,7 @@ Output formats (uniform across backends):
   Discriminator field ``k``:
 
       {"k":"new","n":"name"}
-      {"k":"evolved","c":"name","g":"...","a":"...","p":[...],"i":"..."}
+      {"k":"incidental","c":"name","g":"...","a":"...","p":[...],"i":"..."}
 
 - ``profile_new_characters`` → NDJSON, one profile per line:
 
@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from typing import Any
 
@@ -148,14 +149,11 @@ def build_segment_chapter_messages(
         "- s = 说话人名字\n"
         f"- o = tone ∈ [{tones}]\n\n"
         "============= 切分规则 =============\n\n"
-        "1. 切分单位 = **单一说话人 + 一段不超过 50 字的可朗读文本**：\n"
+        "1. 切分单位 = **单一说话人 + 一句可朗读文本**：\n"
         "   - 说话人变化必须切开。\n"
         "   - 同一说话人的连续多句，按句末标点（。！？…）切成多个片段，**不要合并**。\n"
-        "   - 单句过长时（含逗号但只有一个句末标点，整体超过 50 字）：\n"
-        "     允许在逗号 / 顿号（，、）处再切。**目标是尽量把片段填到接近 50 字**，\n"
-        "     不要逐逗号机械切分。例如「a，b，c。」三个短句加起来 ≤ 50 字时，整段做\n"
-        "     一个片段；超过 50 字才在某个逗号后切开，使前后两半都尽可能接近 50 字。\n"
-        "   - 50 字是软上限，不强求精确（45-55 字都算合格）；中文标点也按 1 字计。\n"
+        "   - **不要考虑片段长度**：一句话即使很长也保持完整，**不得**在逗号 /\n"
+        "     顿号处切分。过长的片段会由后续程序自动切短，不需要你处理。\n"
         "2. 说话人由你结合上下文自主判断（叙述者归「旁白」，角色对话 / 内心独白\n"
         "   归对应角色）。\n"
         "3. **不得遗漏任何可朗读内容**。章节里每一段汉字都必须进入某个片段。\n"
@@ -197,17 +195,10 @@ def build_segment_chapter_messages(
         '{"t":"小子，别急。","s":"药老","o":"gentle"}\n'
         '{"t":"萧炎抬头，沉声道:","s":"旁白","o":"neutral"}\n'
         '{"t":"我明白。","s":"萧炎","o":"serious"}\n\n'
-        "示例 5：短逗号串不切 / 长逗号串才切\n"
-        "原文 5a（22 字，整句不到 50 字 → 整段做一个片段，**不要**逐逗号切）：\n"
-        "    他抬起头，望着远方，长叹了一口气。\n"
-        "切分：\n"
-        '{"t":"他抬起头，望着远方，长叹了一口气。","s":"旁白","o":"neutral"}\n\n'
-        "原文 5b（>50 字，单一句号 → 在逗号处切，让前后两半都接近 50 字）：\n"
-        "    他想起当年师父站在山门口送别时的神情，那双布满老茧的手颤抖着拍了拍他的肩，\n"
-        "    什么也没说，却让自己永生难忘。\n"
-        "切分（在合适的逗号处切一刀，**不**逐逗号切）：\n"
-        '{"t":"他想起当年师父站在山门口送别时的神情，那双布满老茧的手颤抖着拍了拍他的肩，","s":"旁白","o":"neutral"}\n'
-        '{"t":"什么也没说，却让自己永生难忘。","s":"旁白","o":"neutral"}\n\n'
+        "示例 5：长句保持完整 —— 不要在逗号处切分\n"
+        "原文：他想起当年师父站在山门口送别时的神情，那双布满老茧的手颤抖着拍了拍他的肩，什么也没说，却让自己永生难忘。\n"
+        "切分（整句一个片段，逗号一律不切）：\n"
+        '{"t":"他想起当年师父站在山门口送别时的神情，那双布满老茧的手颤抖着拍了拍他的肩，什么也没说，却让自己永生难忘。","s":"旁白","o":"neutral"}\n\n'
         f"**o 必须是上面列出的 {len(list(Tone))} 个枚举之一；其它值会被丢弃为 neutral。**\n\n"
         "============= 已知角色 =============\n\n"
         f"{char_lines}\n\n"
@@ -223,12 +214,129 @@ def build_segment_chapter_messages(
     ]
 
 
+# ==========================================================================
+# segment_chapter output budgeting + line-aligned batching
+# ==========================================================================
+#
+# ``segment_chapter`` emits NDJSON that re-states essentially every readable
+# character of the chapter, one JSON object per reading segment. So the
+# completion size — which must stay under the backend's ``max_tokens`` — is
+# driven by (a) the chapter's content length and (b) the number of segments.
+# A whole long chapter in one call silently truncates: the response stops
+# mid-stream, the dangling JSON line is dropped as unparseable, and the tail
+# of the chapter never becomes audio.
+#
+# The segment count is only knowable after the LLM runs, so we estimate it
+# from sentence-ending punctuation (the LLM emits one segment per sentence —
+# long-sentence comma-splitting is a later Python pass, see
+# ``split_long_segments``, and costs no completion tokens), then split the
+# chapter into line-aligned batches that each fit the budget.
+#
+# Calibrated on 剑来 ch.439: 16.2k content chars, ~16k completion tokens for
+# a single un-batched call (which still overran the 16384 ceiling). The
+# estimate runs slightly conservative, which only makes batches smaller.
+
+# Sentence-ending punctuation — the LLM cuts a new segment after each (the
+# only length-related boundary it is asked to honour, SEGMENT rule 1).
+_SENTENCE_ENDERS = "。！？…!?"
+# Soft per-segment length cap. The prompt does NOT ask the LLM to honour
+# it (LLMs are unreliable at length limits); ``split_long_segments``
+# enforces it deterministically on the LLM's output instead.
+_SEGMENT_SOFT_CAP = 50
+# Fixed NDJSON envelope per segment: `{"t":"","s":"...","o":"..."}` braces /
+# keys / quotes + speaker name + tone word + newline. Rounded up for headroom.
+_NDJSON_ENVELOPE_CHARS = 32
+# Output chars per token. CJK-heavy text wrapped in ASCII JSON scaffolding;
+# a lower value estimates more tokens (safer). Measured ~1.88 on DeepSeek V4.
+_OUTPUT_CHARS_PER_TOKEN = 1.8
+# Fraction of the backend's max_tokens a single batch may be estimated to
+# fill. The 20% gap absorbs estimation error so a batch never truncates.
+_BATCH_OUTPUT_FRACTION = 0.8
+
+
+def _estimate_segment_count(text: str) -> int:
+    """Guess how many NDJSON lines ``segment_chapter`` will emit for ``text``.
+
+    The LLM emits one segment per sentence — i.e. one per sentence-ending
+    punctuation mark — plus one for any trailing content with no closing
+    mark. The later ``split_long_segments`` pass produces more (shorter)
+    segments, but that happens in Python and costs no completion tokens,
+    so it is intentionally not counted here.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return 0
+    count = sum(1 for ch in text if ch in _SENTENCE_ENDERS)
+    if stripped[-1] not in _SENTENCE_ENDERS:
+        count += 1  # trailing content with no closing punctuation
+    return count
+
+
+def estimate_segment_output_tokens(text: str) -> int:
+    """Estimate the completion-token cost of ``segment_chapter`` for ``text``.
+
+    See the budgeting constants above for the model. The estimate is
+    deliberately slightly high — batching uses it to stay clear of the
+    backend's ``max_tokens``, and over-estimating only makes batches smaller.
+    """
+    content_chars = sum(1 for c in text if not c.isspace())
+    segments = _estimate_segment_count(text)
+    output_chars = content_chars + segments * _NDJSON_ENVELOPE_CHARS
+    return math.ceil(output_chars / _OUTPUT_CHARS_PER_TOKEN)
+
+
+def split_chapter_for_segmentation(
+    chapter_text: str,
+    max_output_tokens: int,
+) -> list[str]:
+    """Split ``chapter_text`` into line-aligned batches for ``segment_chapter``.
+
+    Each batch's estimated output (``estimate_segment_output_tokens``) stays
+    within ``_BATCH_OUTPUT_FRACTION`` of ``max_output_tokens`` so a single
+    ``segment_chapter`` call never truncates against the backend's ceiling.
+
+    A line is the indivisible unit — a batch boundary always falls on a
+    newline, never inside a line — so every batch is a clean contiguous
+    substring of ``chapter_text``. Joining the batches back with ``"\\n"``
+    reproduces the original, which keeps the downstream ``locate_sentences``
+    forward cursor monotonic across batch boundaries.
+
+    A lone line that already exceeds the budget becomes its own over-budget
+    batch — there is nothing finer to cut. Returns at least one batch for
+    any non-empty input; ``[]`` for empty input.
+    """
+    if not chapter_text:
+        return []
+
+    budget = max(1, int(max_output_tokens * _BATCH_OUTPUT_FRACTION))
+    lines = chapter_text.split("\n")
+
+    batches: list[str] = []
+    current: list[str] = []
+    current_tokens = 0
+
+    for line in lines:
+        line_tokens = estimate_segment_output_tokens(line)
+        # Close the current batch before it would overflow — but never
+        # emit an empty batch, so a single oversized line still gets in.
+        if current and current_tokens + line_tokens > budget:
+            batches.append("\n".join(current))
+            current = []
+            current_tokens = 0
+        current.append(line)
+        current_tokens += line_tokens
+
+    if current:
+        batches.append("\n".join(current))
+    return batches
+
+
 def build_classify_chapter_characters_messages(
     chapter_text: str,
     known_characters: list[Character],
 ) -> list[dict]:
     """Prompt for Phase A1: identify all non-narrator characters this
-    chapter touches and classify each as new / evolved / stable.
+    chapter touches and classify each as new / incidental.
 
     Why this is split from profile generation:
 
@@ -247,20 +355,12 @@ def build_classify_chapter_characters_messages(
     user = (
         "请通读章节正文，识别本章涉及的所有 **非旁白** 角色，并对每个角色"
         "判断其状态。输出 NDJSON，每个角色一行 JSON 对象。\n\n"
-        "============= 四种状态 =============\n\n"
+        "============= 三种状态 =============\n\n"
         '(a) 全新具名角色（专有名字，不在已知列表里）：\n'
         '    {"k":"new","n":"角色名"}\n'
         '    **只输出名字**，不输出画像 —— 完整画像将由后续步骤根据该角色\n'
         '    在全书中的首次登场上下文生成。\n\n'
-        '(b) 已知角色，本章显示其画像有 **重要演变**：\n'
-        '    {"k":"evolved","c":"已知名字","g":"...","a":"...",'
-        '"p":[...],"i":"..."}\n'
-        "    判断标准：\n"
-        "    · 年龄段跨越（少年→青年→中年→老年）\n"
-        "    · 身份重大变化（弟子→长老；普通人→帝王；活人→魂体等）\n"
-        "    · 性格显著转变（胆怯→勇敢；冷静→暴怒等）\n"
-        "    · identity 描述需要修订以反映新身份\n\n"
-        '(c) **临时角色**（仅本章出现的「描述性称呼」说话人，没有专有名）：\n'
+        '(b) **临时角色**（仅本章出现的「描述性称呼」说话人，没有专有名）：\n'
         '    {"k":"incidental","c":"妇人","g":"...","a":"...",'
         '"p":[...],"i":"..."}\n'
         "    适用情形：\n"
@@ -270,19 +370,18 @@ def build_classify_chapter_characters_messages(
         "    · 后续章节里不会再以同一个称呼引用同一个个体\n"
         "    判断分界：\n"
         "    · 如果文本给了专有名字（萧炎、林黛玉、李四王）→ 当成 (a) new\n"
-        "    · 如果只有称呼（妇人、男子甲、那个老人）→ 当成 (c) incidental\n"
-        "    · 如果同一称呼在前几章已出现过且当成具名角色处理 → 复用已知名字，\n"
-        "      考虑 (b) evolved 而非 (c) incidental\n"
+        "    · 如果只有称呼（妇人、男子甲、那个老人）→ 当成 (b) incidental\n"
         "    画像必须直接给全（性别 / 年龄段 / 性格 / 身份），无需后续补充。\n\n"
-        "(d) 已知角色无显著变化：**不要输出**。\n"
-        "(e) 旁白：**不要输出**（旁白固定，不参与角色画像）。\n\n"
+        "(c) 已知角色（在下方列表里）：**不要输出**。角色画像一经建立即固定，\n"
+        "    后续章节不再修订。\n"
+        "(d) 旁白：**不要输出**（旁白固定，不参与角色画像）。\n\n"
         "============= 字段说明 =============\n\n"
-        "- k = kind ∈ [new, evolved, incidental]\n"
+        "- k = kind ∈ [new, incidental]\n"
         "- n = name（仅 new 用），自取一个稳定名字（有全名用全名，否则用称号），\n"
         "  不要用「他/她/那人」等代词\n"
-        "- c = character name（evolved 复用已知名；incidental 用文中出现的描述性\n"
-        "  称呼，例如「妇人」「老者」「婢女」；同一章节里不同 incidental 必须用\n"
-        "  不同的 c 以便切分时区分）\n"
+        "- c = character name（incidental 用文中出现的描述性称呼，例如「妇人」\n"
+        "  「老者」「婢女」；同一章节里不同 incidental 必须用不同的 c 以便切分时\n"
+        "  区分）\n"
         f"- g = gender ∈ [{genders}]\n"
         f"- a = age ∈ [{ages}]\n"
         f"- p = personality 数组，1-3 个 ∈ [{personalities}]\n"
@@ -291,12 +390,10 @@ def build_classify_chapter_characters_messages(
         "朗读片段切分中作为说话人标识。请确保切分时也使用完全相同的名字 —— "
         "包括 incidental 的描述性称呼也要原样使用。\n\n"
         "============= 输出示例 =============\n\n"
-        "假设本章首次出现「药老」「美杜莎」，已知「萧炎」从少年长成青年；\n"
+        "假设本章首次出现「药老」「美杜莎」两个具名角色；\n"
         "另有一名只出现一次的妇人开口说话，和一名仆人通报：\n"
         '{"k":"new","n":"药老"}\n'
         '{"k":"new","n":"美杜莎"}\n'
-        '{"k":"evolved","c":"萧炎","g":"male","a":"young_adult",'
-        '"p":["determined","wise"],"i":"青年弟子，主角，已突破斗师境"}\n'
         '{"k":"incidental","c":"妇人","g":"female","a":"adult",'
         '"p":["gentle"],"i":"路边妇人，关切问询"}\n'
         '{"k":"incidental","c":"仆人","g":"male","a":"adult",'
@@ -308,7 +405,7 @@ def build_classify_chapter_characters_messages(
         f"{chapter_text}\n"
         "</novel_chapter_input>\n\n"
         "**严格输出 NDJSON，每行一个 JSON 对象。不要 ```代码块包裹，不要其他文字。**\n"
-        "如果本章没有任何新角色 / 演变 / 临时角色，输出空响应即可（0 行）。"
+        "如果本章没有任何新角色 / 临时角色，输出空响应即可（0 行）。"
     )
     return [
         {"role": "system", "content": CHARACTER_ANALYSIS_SYSTEM},
@@ -476,13 +573,91 @@ def parse_segmented_chapter(raw: str) -> list[AnalyzedSentence]:
     return sentences
 
 
+# Clause delimiters an over-long segment may be cut at (comma / 顿号).
+_CLAUSE_DELIMITERS = "，、"
+
+
+def split_long_segments(
+    segments: list[AnalyzedSentence],
+) -> list[AnalyzedSentence]:
+    """Cut over-long reading segments at clause boundaries.
+
+    The segmentation prompt deliberately does **not** ask the LLM to obey
+    a length cap — LLMs honour it poorly. The LLM cuts only on speaker
+    changes and sentence-ending punctuation; this deterministic pass then
+    splits any segment longer than ``_SEGMENT_SOFT_CAP`` visible chars at
+    comma / 顿号 boundaries, keeping each piece near the cap.
+
+    Each piece inherits the original segment's speaker and tone, and the
+    pieces' texts concatenate back to the original — so downstream
+    ``locate_sentences`` still resolves every piece to a position range.
+    A segment with no internal clause delimiter is left whole (there is
+    nowhere safe to cut).
+    """
+    out: list[AnalyzedSentence] = []
+    for seg in segments:
+        for piece in _split_text_at_clauses(seg.text, _SEGMENT_SOFT_CAP):
+            out.append(AnalyzedSentence(
+                text=piece, speaker=seg.speaker, tone=seg.tone,
+            ))
+    return out
+
+
+def _visible_len(text: str) -> int:
+    """Character count ignoring whitespace — matches the prompt's
+    '中文标点按 1 字计' counting (punctuation counts as one char)."""
+    return sum(1 for ch in text if not ch.isspace())
+
+
+def _split_text_at_clauses(text: str, cap: int) -> list[str]:
+    """Cut ``text`` into pieces of roughly ``cap`` visible chars at clause
+    delimiters. Returns ``[text]`` unchanged when it is already within the
+    cap or has no internal delimiter to cut on.
+
+    Pieces are balanced: rather than greedily filling to ``cap`` and
+    leaving a tiny tail, the text is divided into ``ceil(total / cap)``
+    pieces of roughly equal length.
+    """
+    total = _visible_len(text)
+    if total <= cap:
+        return [text]
+
+    # Break into clauses; each delimiter stays attached to its clause.
+    clauses: list[str] = []
+    buf: list[str] = []
+    for ch in text:
+        buf.append(ch)
+        if ch in _CLAUSE_DELIMITERS:
+            clauses.append("".join(buf))
+            buf = []
+    if buf:
+        clauses.append("".join(buf))
+    if len(clauses) <= 1:
+        return [text]  # no internal delimiter — nothing safe to cut
+
+    n = math.ceil(total / cap)
+    target = total / n  # balanced per-piece length
+
+    pieces: list[str] = []
+    cur = ""
+    for clause in clauses:
+        cur += clause
+        # Emit once the running piece reaches the balanced target — but
+        # never start the final piece early: after n-1 pieces the rest
+        # is the last piece, so the count never exceeds n.
+        if len(pieces) < n - 1 and _visible_len(cur) >= target:
+            pieces.append(cur)
+            cur = ""
+    if cur:
+        pieces.append(cur)
+    return pieces
+
+
 def parse_classified_characters(raw: str) -> ClassifiedCharacters:
     """Parse NDJSON produced by ``classify_chapter_characters``.
 
     Output schema discriminates by ``k``:
     - ``{"k":"new","n":"name"}`` → appended to ``new_names``
-    - ``{"k":"evolved", c/g/a/p/i...}`` → parsed as a Character and
-      appended to ``evolved``
     - ``{"k":"incidental", c/g/a/p/i...}`` → parsed as a Character with
       the LLM-given descriptive name (e.g. "妇人") and appended to
       ``incidentals``. The service layer renames + assigns a chapter-
@@ -494,7 +669,6 @@ def parse_classified_characters(raw: str) -> ClassifiedCharacters:
     """
     new_names: list[str] = []
     new_seen: set[str] = set()
-    evolved: list[Character] = []
     incidentals: list[Character] = []
     incidental_seen: set[str] = set()
     bad_lines = 0
@@ -519,10 +693,6 @@ def parse_classified_characters(raw: str) -> ClassifiedCharacters:
                 if name and name not in new_seen:
                     new_names.append(name)
                     new_seen.add(name)
-        elif kind == "evolved":
-            char = _parse_character_update(obj)
-            if char is not None:
-                evolved.append(char)
         elif kind == "incidental":
             char = _parse_character_update(obj)
             if char is not None and char.name not in incidental_seen:
@@ -536,9 +706,7 @@ def parse_classified_characters(raw: str) -> ClassifiedCharacters:
             "classify_chapter_characters: skipped %d unparseable NDJSON lines",
             bad_lines,
         )
-    return ClassifiedCharacters(
-        new_names=new_names, evolved=evolved, incidentals=incidentals,
-    )
+    return ClassifiedCharacters(new_names=new_names, incidentals=incidentals)
 
 
 def parse_character_updates(raw: str) -> list[Character]:
@@ -640,13 +808,11 @@ def _parse_json_object(raw: str) -> Any:
 
 
 def format_known_characters_full(characters: list[Character]) -> str:
-    """Render the known-character table for the character-update prompt
-    with **full profile** (gender/age/personality/identity).
+    """Render the known-character table for the character-classification
+    prompt with **full profile** (gender/age/personality/identity).
 
-    The LLM uses this to:
-    1. Reuse existing names instead of re-creating duplicates
-    2. Decide whether the character has evolved enough to warrant a
-       profile update
+    The LLM uses this to recognise already-known characters so it does
+    not re-emit them as new.
     """
     lines = _format_known_lines(characters, full=True)
     if not lines:

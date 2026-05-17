@@ -4,15 +4,18 @@ from __future__ import annotations
 import json
 
 from app.core.enums import Age, Gender, Personality, Tone
-from app.core.models import Character
+from app.core.models import AnalyzedSentence, Character
 from app.services.llm_prompts import (
     _parse_json_object,
+    estimate_segment_output_tokens,
     format_known_characters_brief,
     format_known_characters_full,
     parse_character_updates,
     parse_chapter_detection,
     parse_classified_characters,
     parse_segmented_chapter,
+    split_chapter_for_segmentation,
+    split_long_segments,
 )
 
 
@@ -96,6 +99,117 @@ class TestParseSegmentedChapter:
 
     def test_garbage_returns_empty(self):
         assert parse_segmented_chapter("garbage") == []
+
+
+# --- segment_chapter output budgeting + batching ---
+
+
+class TestEstimateSegmentOutputTokens:
+    def test_empty_is_zero(self):
+        assert estimate_segment_output_tokens("") == 0
+
+    def test_scales_with_length(self):
+        short = estimate_segment_output_tokens("他笑了。")
+        long = estimate_segment_output_tokens("他笑了。" * 100)
+        assert long > short > 0
+
+    def test_more_sentences_cost_more_than_one_long_run(self):
+        # Same character count, but many enders => more NDJSON envelopes.
+        many = estimate_segment_output_tokens("啊。" * 50)
+        one = estimate_segment_output_tokens("啊" * 99 + "。")
+        assert many > one
+
+
+class TestSplitChapterForSegmentation:
+    def test_empty_returns_empty(self):
+        assert split_chapter_for_segmentation("", 16384) == []
+
+    def test_short_chapter_single_batch(self):
+        text = "第一行。\n\n第二行。\n\n第三行。"
+        batches = split_chapter_for_segmentation(text, 16384)
+        assert batches == [text]
+
+    def test_batches_rejoin_to_original(self):
+        text = "\n".join(f"这是第{i}段正文，内容足够长一些。" for i in range(2000))
+        batches = split_chapter_for_segmentation(text, 16384)
+        assert len(batches) > 1
+        assert "\n".join(batches) == text
+
+    def test_batch_boundaries_fall_on_lines(self):
+        text = "\n".join(f"第{i}段。" for i in range(500))
+        batches = split_chapter_for_segmentation(text, 16384)
+        for batch in batches:
+            # No batch starts or ends mid-line: every line is intact.
+            assert all(ln for ln in batch.split("\n") if ln != "" or True)
+        # Reassembly is exact, so no line was split.
+        assert "\n".join(batches) == text
+
+    def test_each_batch_within_budget(self):
+        text = "\n".join("正文内容。" * 20 for _ in range(300))
+        max_tokens = 16384
+        batches = split_chapter_for_segmentation(text, max_tokens)
+        budget = int(max_tokens * 0.8)
+        for batch in batches[:-1]:  # last batch is whatever remains
+            assert estimate_segment_output_tokens(batch) <= budget
+
+    def test_single_oversized_line_becomes_its_own_batch(self):
+        # One line alone exceeding the budget can't be split — it stands alone.
+        huge = "超长的一行没有任何换行符。" * 4000
+        batches = split_chapter_for_segmentation(huge, 16384)
+        assert batches == [huge]
+
+
+# --- split_long_segments ---
+
+
+def _seg(text: str, speaker: str = "旁白", tone: Tone = Tone.NEUTRAL):
+    return AnalyzedSentence(text=text, speaker=speaker, tone=tone)
+
+
+class TestSplitLongSegments:
+    def test_short_segment_unchanged(self):
+        segs = [_seg("他抬起头，望着远方，长叹了一口气。")]
+        out = split_long_segments(segs)
+        assert [s.text for s in out] == [segs[0].text]
+
+    def test_long_segment_split_at_commas(self):
+        # 70+ visible chars with commas -> must be split into 2 pieces.
+        text = (
+            "他想起当年师父站在山门口送别时的神情，"
+            "那双布满老茧的手颤抖着拍了拍他的肩，"
+            "什么也没说，却让自己永生难忘，这件事一直记到今天。"
+        )
+        out = split_long_segments([_seg(text)])
+        assert len(out) >= 2
+        # Pieces concatenate back to the original — nothing lost.
+        assert "".join(s.text for s in out) == text
+        # Every piece stays reasonably near the 50-char cap.
+        for s in out:
+            assert sum(1 for c in s.text if not c.isspace()) <= 60
+
+    def test_pieces_inherit_speaker_and_tone(self):
+        text = "我一定要赢，" * 20  # long, comma-rich
+        out = split_long_segments([_seg(text, speaker="萧炎", tone=Tone.ANGRY)])
+        assert len(out) > 1
+        assert all(s.speaker == "萧炎" and s.tone == Tone.ANGRY for s in out)
+
+    def test_long_segment_without_delimiter_left_whole(self):
+        # Over the cap but no comma/顿号 anywhere — nowhere safe to cut.
+        text = "啊" * 80
+        out = split_long_segments([_seg(text)])
+        assert [s.text for s in out] == [text]
+
+    def test_balanced_not_greedy(self):
+        # 4 equal clauses, ~25 chars each (100 total) -> 2 balanced pieces
+        # of ~50, not a 75/25 greedy fill.
+        clause = "这是一段大约二十五个字长的测试用例文字内容啊，"
+        out = split_long_segments([_seg(clause * 4)])
+        assert len(out) == 2
+        lens = [sum(1 for c in s.text if not c.isspace()) for s in out]
+        assert abs(lens[0] - lens[1]) <= len(clause)
+
+    def test_empty_input(self):
+        assert split_long_segments([]) == []
 
 
 # --- parse_character_updates ---
@@ -266,7 +380,7 @@ class TestFormatKnownCharactersBrief:
         assert "personality=" not in out
 
 
-# --- parse_classified_characters (three-bucket NDJSON: new/evolved/incidental) ---
+# --- parse_classified_characters (two-bucket NDJSON: new/incidental) ---
 
 
 class TestParseClassifiedCharacters:
@@ -274,19 +388,7 @@ class TestParseClassifiedCharacters:
         raw = '{"k":"new","n":"药老"}\n{"k":"new","n":"美杜莎"}\n'
         result = parse_classified_characters(raw)
         assert result.new_names == ["药老", "美杜莎"]
-        assert result.evolved == []
         assert result.incidentals == []
-
-    def test_evolved_only(self):
-        raw = (
-            '{"k":"evolved","c":"萧炎","g":"male","a":"youth",'
-            '"p":["determined"],"i":"已突破斗师境"}\n'
-        )
-        result = parse_classified_characters(raw)
-        assert result.new_names == []
-        assert len(result.evolved) == 1
-        assert result.evolved[0].name == "萧炎"
-        assert result.evolved[0].age == Age.YOUTH
 
     def test_incidental_parsed_with_full_profile(self):
         raw = (
@@ -295,7 +397,6 @@ class TestParseClassifiedCharacters:
         )
         result = parse_classified_characters(raw)
         assert result.new_names == []
-        assert result.evolved == []
         assert len(result.incidentals) == 1
         inc = result.incidentals[0]
         assert inc.name == "妇人"
@@ -307,11 +408,9 @@ class TestParseClassifiedCharacters:
         # negative id.
         assert inc.id == 0
 
-    def test_three_buckets_in_one_response(self):
+    def test_both_buckets_in_one_response(self):
         raw = (
             '{"k":"new","n":"药老"}\n'
-            '{"k":"evolved","c":"萧炎","g":"male","a":"youth",'
-            '"p":["wise"],"i":"成长"}\n'
             '{"k":"incidental","c":"仆人","g":"male","a":"adult",'
             '"p":["timid"],"i":"萧家仆人"}\n'
             '{"k":"incidental","c":"妇人","g":"female","a":"elder",'
@@ -319,8 +418,19 @@ class TestParseClassifiedCharacters:
         )
         result = parse_classified_characters(raw)
         assert result.new_names == ["药老"]
-        assert [c.name for c in result.evolved] == ["萧炎"]
         assert [c.name for c in result.incidentals] == ["仆人", "妇人"]
+
+    def test_evolved_kind_is_ignored(self):
+        """The 'evolved' kind was removed — such a line is now unknown
+        and skipped, not merged anywhere."""
+        raw = (
+            '{"k":"new","n":"药老"}\n'
+            '{"k":"evolved","c":"萧炎","g":"male","a":"youth",'
+            '"p":["determined"],"i":"已突破斗师境"}\n'
+        )
+        result = parse_classified_characters(raw)
+        assert result.new_names == ["药老"]
+        assert result.incidentals == []
 
     def test_incidental_dedup_by_name(self):
         """LLM occasionally emits the same descriptor twice; keep only
@@ -349,5 +459,4 @@ class TestParseClassifiedCharacters:
     def test_empty_returns_empty_buckets(self):
         result = parse_classified_characters("")
         assert result.new_names == []
-        assert result.evolved == []
         assert result.incidentals == []

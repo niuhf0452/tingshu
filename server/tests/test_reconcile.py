@@ -1,8 +1,8 @@
 """Tests for chapter character reconciliation (post-refactor).
 
-The reconcile module is now split into two functions:
-- ``merge_character_updates``: applies Phase-A character updates
-  (evolved + new profiles) to the cumulative roster.
+The reconcile module is split into two functions:
+- ``merge_new_characters``: appends newly-discovered character profiles
+  to the cumulative roster (already-known names are skipped).
 - ``reconcile_chapter_speakers``: maps post-segmentation speaker names
   to ids using the **already-updated** roster. Unknown speakers fall
   back to the narrator (no auto-allocation).
@@ -14,7 +14,7 @@ from app.core.models import Character
 from app.core.nlp.reconcile import (
     FIRST_BOOK_CHARACTER_ID,
     NARRATOR_ID,
-    merge_character_updates,
+    merge_new_characters,
     reconcile_chapter_speakers,
 )
 
@@ -30,13 +30,13 @@ def _profile(name: str, **kw) -> Character:
     )
 
 
-class TestMergeCharacterUpdates:
+class TestMergeNewCharacters:
     def test_new_character_appended(self):
         known = [Character(id=0, name="旁白")]
-        updated, new, evolved = merge_character_updates(
-            known=known, updates=[_profile("破军", identity="反派")],
+        updated, new = merge_new_characters(
+            known=known, new_characters=[_profile("破军", identity="反派")],
         )
-        assert new == 1 and evolved == 0
+        assert new == 1
         assert [c.name for c in updated] == ["旁白", "破军"]
         # First book character lands at FIRST_BOOK_CHARACTER_ID (16),
         # leaving 1..15 reserved for additional narrator slots.
@@ -46,15 +46,16 @@ class TestMergeCharacterUpdates:
         """Even with no known characters at all, new ids must skip the
         reserved range so a book character can't accidentally get
         routed to a narrator voice."""
-        updated, _, _ = merge_character_updates(
-            known=[], updates=[_profile("a"), _profile("b"), _profile("c")],
+        updated, _ = merge_new_characters(
+            known=[], new_characters=[_profile("a"), _profile("b"), _profile("c")],
         )
         ids = [c.id for c in updated]
         assert all(i >= FIRST_BOOK_CHARACTER_ID for i in ids)
         assert ids == sorted(set(ids))  # contiguous + unique
 
-    def test_known_character_evolved_overrides_profile(self):
-        """Growth: 萧炎 evolves teen → youth, identity changes too."""
+    def test_known_character_profile_not_overwritten(self):
+        """A character's profile is fixed once established — a candidate
+        with an already-known name is skipped, not merged."""
         known = [
             Character(id=0, name="旁白"),
             Character(
@@ -63,27 +64,27 @@ class TestMergeCharacterUpdates:
                 personality=[Personality.BRAVE],
             ),
         ]
-        updates = [Character(
+        candidate = Character(
             id=0, name="萧炎", identity="青年高手，主角",
             gender=Gender.MALE, age=Age.YOUTH,
             personality=[Personality.BRAVE, Personality.WISE],
-        )]
-        updated, new, evolved = merge_character_updates(
-            known=known, updates=updates,
         )
-        assert new == 0 and evolved == 1
+        updated, new = merge_new_characters(
+            known=known, new_characters=[candidate],
+        )
+        assert new == 0
         xy = next(c for c in updated if c.name == "萧炎")
-        assert xy.id == 16  # id preserved
-        assert xy.age == Age.YOUTH
-        assert xy.identity == "青年高手，主角"
+        assert xy.id == 16  # untouched
+        assert xy.age == Age.TEEN  # original profile preserved
+        assert xy.identity == "少年弟子，主角"
 
-    def test_narrator_update_ignored(self):
+    def test_narrator_candidate_ignored(self):
         known = [Character(id=0, name="旁白")]
         bogus = Character(id=0, name="旁白", identity="should not be applied")
-        updated, new, evolved = merge_character_updates(
-            known=known, updates=[bogus],
+        updated, new = merge_new_characters(
+            known=known, new_characters=[bogus],
         )
-        assert new == 0 and evolved == 0
+        assert new == 0
         assert updated[0].identity == ""
 
     def test_new_ids_continue_from_max_above_reserved(self):
@@ -91,17 +92,17 @@ class TestMergeCharacterUpdates:
             Character(id=0, name="旁白"),
             Character(id=42, name="萧炎"),  # arbitrary high existing id
         ]
-        updated, _, _ = merge_character_updates(
-            known=known, updates=[_profile("药老")],
+        updated, _ = merge_new_characters(
+            known=known, new_characters=[_profile("药老")],
         )
         # Continue from max(known)+1 since that's already past the
         # narrator-reserved range.
         assert next(c for c in updated if c.name == "药老").id == 43
 
-    def test_empty_updates_is_noop(self):
+    def test_empty_input_is_noop(self):
         known = [Character(id=0, name="旁白"), Character(id=1, name="萧炎")]
-        updated, new, evolved = merge_character_updates(known=known, updates=[])
-        assert new == 0 and evolved == 0
+        updated, new = merge_new_characters(known=known, new_characters=[])
+        assert new == 0
         assert updated == known
 
 

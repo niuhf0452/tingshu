@@ -24,6 +24,13 @@ tts:
   provider: stub
   cache_dir: data/tts_cache
   voice_library: data/voices/speakers.json
+  # Server-side TTS cache size cap. A background janitor sweeps the
+  # cache directory every `cache_sweep_seconds`; when it exceeds
+  # `cache_max_mb` it evicts the oldest files (by mtime, approximate
+  # LRU) until back under the cap. Set `cache_sweep_seconds: 0` to
+  # disable the janitor entirely.
+  cache_max_mb: 500
+  cache_sweep_seconds: 60
   qwen3:
     # Only used when provider=qwen3_tts. See server/README.md for setup.
     model_dir: pretrained_models/Qwen3-TTS-0.6B

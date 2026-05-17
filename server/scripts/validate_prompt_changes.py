@@ -89,9 +89,6 @@ def main() -> None:
     print(f"\nnew_names ({len(classified.new_names)}):")
     for n in classified.new_names:
         print(f"  - {n}")
-    print(f"\nevolved ({len(classified.evolved)}):")
-    for c in classified.evolved:
-        print(f"  - {c.name}: {_short(c)}")
     print(f"\nincidentals ({len(classified.incidentals)}):")
     for c in classified.incidentals:
         print(f"  - {c.name}: {_short(c)}")
