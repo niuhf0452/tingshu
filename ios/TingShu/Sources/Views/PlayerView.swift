@@ -72,7 +72,10 @@ struct PlayerView: View {
             }
         }
         .sheet(isPresented: $showTOC) {
-            ChaptersTOCView(book: book) { chapterId in
+            ChaptersTOCView(
+                book: book,
+                currentChapterId: playback.state.browseChapterId,
+            ) { chapterId in
                 playback.state.followMode = false
                 Task { await playback.setBrowseChapter(chapterId: chapterId) }
                 showTOC = false
@@ -1074,25 +1077,53 @@ extension Color {
 
 struct ChaptersTOCView: View {
     let book: LocalBook
+    /// The chapter currently shown in the player. Its row is highlighted
+    /// and scrolled into view when the sheet opens.
+    let currentChapterId: Int?
     let onSelect: (Int) -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            List(book.meta.chapters) { chapter in
-                Button {
-                    onSelect(chapter.id)
-                } label: {
-                    HStack {
-                        Text("\(chapter.id)").foregroundStyle(.secondary).frame(width: 40, alignment: .leading)
-                        Text(chapter.title).lineLimit(2)
+            ScrollViewReader { proxy in
+                List(book.meta.chapters) { chapter in
+                    let isCurrent = chapter.id == currentChapterId
+                    Button {
+                        onSelect(chapter.id)
+                    } label: {
+                        HStack {
+                            Text("\(chapter.id)")
+                                .foregroundStyle(isCurrent ? Color.accentColor : Color.secondary)
+                                .frame(width: 40, alignment: .leading)
+                            Text(chapter.title)
+                                .lineLimit(2)
+                                .fontWeight(isCurrent ? .semibold : .regular)
+                                .foregroundStyle(isCurrent ? Color.accentColor : Color.primary)
+                            Spacer(minLength: 8)
+                            if isCurrent {
+                                Image(systemName: "headphones")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+                    }
+                    .listRowBackground(
+                        isCurrent ? Color.accentColor.opacity(0.12) : nil,
+                    )
+                }
+                .navigationTitle("目录")
+                .toolbar {
+                    ToolbarItem(placement: .topTrailing) {
+                        Button("关闭") { dismiss() }
                     }
                 }
-            }
-            .navigationTitle("目录")
-            .toolbar {
-                ToolbarItem(placement: .topTrailing) {
-                    Button("关闭") { dismiss() }
+                .onAppear {
+                    guard let current = currentChapterId else { return }
+                    // Defer one runloop so the List has laid its rows
+                    // out before being asked to scroll.
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(current, anchor: .center)
+                    }
                 }
             }
         }
