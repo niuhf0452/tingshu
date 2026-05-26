@@ -13,6 +13,7 @@ dependencies = [
     "chardet>=5.2",
     "jieba>=0.42",
     "wakepy>=0.10",
+    "numpy>=1.24",
 ]
 
 [project.optional-dependencies]
@@ -20,11 +21,16 @@ dev = [
     "pytest>=8.0",
     "httpx>=0.27",
     "ruff>=0.6",
-    "numpy>=1.24",
 ]
 mlx = [
     # TTS only — LLM goes through DeepSeek HTTP, not local MLX.
     "mlx-audio>=0.2",
+]
+scripts = [
+    # Audio analysis / visualization utilities under scripts/
+    "librosa>=0.10",
+    "soundfile>=0.12",
+    "matplotlib>=3.8",
 ]
 
 [build-system]

@@ -52,6 +52,7 @@ import subprocess
 import tempfile
 import time
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -122,31 +123,56 @@ class Qwen3TTSClient:
 
         ``model`` is a test hatch — pass a stand-in that exposes the same
         ``generate()`` method as the real ``mlx_audio.tts.models.qwen3_tts.Model``.
+        When ``model`` is provided, the dedicated executor is skipped and
+        all calls run inline (tests don't need thread affinity).
+
+        **Thread affinity**: mlx-audio models are bound to whichever
+        thread called ``load_model``. Invoking ``model.generate`` from
+        any other thread raises ``RuntimeError("There is no Stream(gpu,
+        0) in current thread.")`` — the very first MLX op fails and
+        every retry returns 0 chunks in <10 ms. FastAPI's threadpool
+        rotates workers per request, so we route every TTS call through
+        a dedicated single-thread executor that owns the model.
         """
-        if model is None:
-            model_path = Path(model_dir).resolve()
-            if not model_path.exists():
-                raise FileNotFoundError(
-                    f"Qwen3-TTS model not found at {model_path}. "
-                    "Download per the project README (Qwen3-TTS setup section) "
-                    "before setting tts.provider=qwen3_tts."
-                )
+        self._prompts_dir = Path(prompts_dir).resolve() if prompts_dir else None
+        # Per-prompt cache: prompt_id → (ref_audio_path_str, ref_text)
+        self._prompt_cache: dict[str, tuple[str, str]] = {}
+
+        if model is not None:
+            # Test path: stub model, run synchronously inline.
+            self._model = model
+            self._executor: ThreadPoolExecutor | None = None
+            return
+
+        model_path = Path(model_dir).resolve()
+        if not model_path.exists():
+            raise FileNotFoundError(
+                f"Qwen3-TTS model not found at {model_path}. "
+                "Download per the project README (Qwen3-TTS setup section) "
+                "before setting tts.provider=qwen3_tts."
+            )
+
+        # Dedicated single-thread executor that loads AND serves the
+        # model. ``daemon`` so it doesn't block process exit.
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="qwen3-tts",
+        )
+
+        def _load_on_worker():
             try:
                 from mlx_audio.tts.utils import load_model
-            except ImportError as exc:  # pragma: no cover — depends on host env
+            except ImportError as exc:  # pragma: no cover — host env
                 raise ImportError(
                     "mlx-audio not importable. `pip install mlx-audio` "
                     "(M-series Mac only)."
                 ) from exc
             log.info("loading Qwen3-TTS from %s", model_path)
             t0 = time.monotonic()
-            model = load_model(model_path)
+            m = load_model(model_path)
             log.info("Qwen3-TTS loaded in %.1fs", time.monotonic() - t0)
+            return m
 
-        self._model = model
-        self._prompts_dir = Path(prompts_dir).resolve() if prompts_dir else None
-        # Per-prompt cache: prompt_id → (ref_audio_path_str, ref_text)
-        self._prompt_cache: dict[str, tuple[str, str]] = {}
+        self._model = self._executor.submit(_load_on_worker).result()
 
     def synthesize(
         self,
@@ -154,8 +180,25 @@ class Qwen3TTSClient:
         speaker_id: str,
         tone: Tone,
     ) -> bytes:
+        """Public entrypoint. Dispatches the real work to the
+        model-owning thread (see ``__init__`` for why). When tests
+        injected a stub model the executor is None and we run inline.
+        """
+        if self._executor is None:
+            return self._synthesize_impl(text, speaker_id, tone)
+        return self._executor.submit(
+            self._synthesize_impl, text, speaker_id, tone,
+        ).result()
+
+    def _synthesize_impl(
+        self,
+        text: str,
+        speaker_id: str,
+        tone: Tone,
+    ) -> bytes:
         """Synthesize ``text`` at 1.0x (playback rate is applied client-
         side via ``AVAudioUnitTimePitch`` so the cache stays speed-free).
+        MUST run on the model-owning thread.
 
         Each clip is quality-checked with ``audio_qc``: Qwen3-TTS
         occasionally fails to terminate and trails off into a long span
@@ -188,11 +231,24 @@ class Qwen3TTSClient:
         for attempt in range(1, _MAX_SYNTH_ATTEMPTS + 1):
             # ``gpu_guard`` serialises with the LLM on Metal — held only
             # for one generation, released between attempts.
+            attempt_t0 = time.monotonic()
+            attempt_err: str | None = None
             with gpu_guard():
                 try:
                     samples = _collect_samples(_generate())
-                except RuntimeError:
+                except RuntimeError as exc:
                     samples = None  # zero / no audio — a retry may recover
+                    attempt_err = str(exc)
+                except Exception as exc:  # noqa: BLE001
+                    # Non-RuntimeError (ImportError, ValueError from mlx,
+                    # transformers config errors, etc.) would otherwise
+                    # propagate and silently break the whole synth path
+                    # via the outer ``except RuntimeError`` in TTSService.
+                    # Surface the type+msg in the warning so the operator
+                    # can see what mlx-audio actually threw.
+                    samples = None
+                    attempt_err = f"{type(exc).__name__}: {exc}"
+            attempt_wall = time.monotonic() - attempt_t0
 
             span = (
                 audio_qc.longest_bad_span(samples, OUTPUT_SAMPLE_RATE)
@@ -210,10 +266,13 @@ class Qwen3TTSClient:
                 break
 
             log.warning(
-                "Qwen3-TTS attempt %d/%d defective (%s) — %s; "
+                "Qwen3-TTS attempt %d/%d defective (%s, wall=%.2fs) — %s; "
                 "speaker=%s tone=%s text=%r",
                 attempt, _MAX_SYNTH_ATTEMPTS,
-                "no audio" if samples is None else f"bad_span={span:.1f}s",
+                attempt_err or (
+                    "no audio" if samples is None else f"bad_span={span:.1f}s"
+                ),
+                attempt_wall,
                 "retrying" if attempt < _MAX_SYNTH_ATTEMPTS else "giving up",
                 speaker_id, tone.value, text[:120],
             )

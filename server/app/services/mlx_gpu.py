@@ -1,21 +1,23 @@
-"""Process-wide lock that serializes all MLX / Metal GPU work.
+"""Process-wide lock that serializes MLX / Metal GPU work across
+multiple MLX-backed services.
 
 The Apple GPU command buffer isn't safe for concurrent submission from
-separate threads. MLX (Qwen3 LLM) and mlx-audio (Qwen3-TTS) run in
-different Python threads — FastAPI's threadpool for TTS, our background
-``ThreadPoolExecutor`` for character profile analysis, and the request
-thread for chapter detection / analyze_chapter. Without shared
-serialization, two threads can each submit Metal commands simultaneously
-and trigger assertions like:
+separate threads. If we ever run a local MLX LLM alongside Qwen3-TTS,
+both must take turns or Metal aborts the process with:
 
     AGXG16GFamilyCommandBuffer ... A command encoder is already encoding
     to this command buffer
 
-which abort the whole process. Both the LLM and TTS backends MUST hold
-this lock around their ``generate()`` call.
+Every MLX-backed backend must hold ``gpu_guard()`` around its
+``generate()`` call. MLX inference saturates the GPU internally, so the
+lock costs nothing in throughput.
 
-MLX inference already serialises internally per model anyway (one call
-saturates the GPU), so a global lock here costs nothing in throughput.
+**Note on per-model thread affinity**: MLX models are thread-bound at
+load time — the model can only be invoked from the thread that loaded
+it (see ``Qwen3TTSClient`` for the dedicated-thread executor pattern).
+The lock here serialises *between* MLX-backed services, but does not
+solve "wrong thread for this model"; that requires structuring each
+backend so all its calls land on the same thread.
 """
 from __future__ import annotations
 

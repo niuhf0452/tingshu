@@ -186,6 +186,43 @@ def test_cache_key_normalized_so_variants_share_audio(tmp_path: Path):
     assert client.calls == 1
 
 
+def test_silence_fallback_not_cached(tmp_path: Path):
+    """When the backend raises RuntimeError, the silence substitution
+    is returned but NOT persisted to cache — so once the backend
+    recovers, the next request re-synthesizes instead of being stuck
+    with a poisoned silent entry.
+    """
+    class FlakyClient:
+        def __init__(self):
+            self.calls = 0
+            self.fail = True
+
+        def synthesize(self, **kwargs):
+            self.calls += 1
+            if self.fail:
+                raise RuntimeError("backend down")
+            return StubTTSClient().synthesize(**kwargs)
+
+    client = FlakyClient()
+    service = TTSService(client=client, cache=TTSCache(tmp_path / "c"))
+
+    # 1st call: backend fails → silence returned, nothing cached.
+    a1 = service.synthesize(text="x", speaker=LIBRARY[0], tone=Tone.NEUTRAL)
+    assert client.calls == 1
+    assert list((tmp_path / "c").iterdir()) == []  # cache directory empty
+
+    # 2nd call (still failing): backend re-invoked, no cache hit.
+    service.synthesize(text="x", speaker=LIBRARY[0], tone=Tone.NEUTRAL)
+    assert client.calls == 2
+
+    # Backend recovers: next call re-synthesizes real audio (not the
+    # cached silence from earlier).
+    client.fail = False
+    a3 = service.synthesize(text="x", speaker=LIBRARY[0], tone=Tone.NEUTRAL)
+    assert client.calls == 3
+    assert a3 != a1
+
+
 def test_cache_miss_on_speaker_or_text_change(tmp_path: Path):
     class CountingClient:
         def __init__(self):

@@ -181,15 +181,18 @@ class TTSService:
             # failure several times internally (see ``Qwen3TTSClient``);
             # reaching here means every attempt still produced no audio.
             # Substitute silence so the player can advance instead of
-            # erroring out the whole sentence, and cache it so the next
-            # request doesn't re-run the same losing synthesis. The user
-            # can invalidate by clearing the cache directory if needed.
+            # erroring out the whole sentence — but **do not cache it**:
+            # a transient backend failure (mlx-audio import error, model
+            # load failure, GPU hiccup) would otherwise permanently
+            # poison every (speaker, text) attempted during the outage,
+            # forcing a manual cache wipe to recover. Re-synthesis on
+            # the next request is cheap compared to that footgun.
             log.warning(
-                "tts backend returned no audio; substituting silence: "
+                "tts backend returned no audio; substituting silence (not cached): "
                 "speaker=%s err=%s text=%r",
                 speaker.speaker_id, exc, text[:120],
             )
-            audio = _silence_wav()
+            return _silence_wav()
         elapsed = time.monotonic() - t0
         self.cache.put(speaker.speaker_id, text, audio)
         log.info(
